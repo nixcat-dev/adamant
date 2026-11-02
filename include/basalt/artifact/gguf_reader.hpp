@@ -529,9 +529,21 @@ private:
         const size_t n = shards_.size();
         const MetaValue* count0 = shards_[0]->get("split.count");
         if (n == 1) {
-            if (count0 && count0->u > 1)
-                throw std::runtime_error("GGUF: " + shards_[0]->path() + " is shard 1 of " + std::to_string(count0->u) +
-                                         ", but it was opened as a whole model");
+            if (count0 && count0->u > 1) {
+                // A file extracted from a split model keeps that model's split metadata, and the counts it keeps
+                // describe the model it came from rather than this file, so they cannot say whether the payload
+                // is whole.  The data can.  Accept a file whose every declared tensor lies inside it, and refuse
+                // one cut short, where the truncation is the real error rather than the inherited metadata.
+                bool whole = !shards_[0]->tensors().empty();
+                for (size_t i = 0; whole && i < shards_[0]->tensors().size(); ++i)
+                    whole = in_bounds(shards_[0]->tensors()[i], 0);
+                if (!whole)
+                    throw std::runtime_error(
+                        "GGUF: " + shards_[0]->path() + " is one file of a " + std::to_string(count0->u) +
+                        "-shard set and " +
+                        (shards_[0]->tensors().empty() ? "holds no tensors, so it cannot be read as a whole model"
+                                                       : "its tensors do not all fit inside it, so it is cut short"));
+            }
             return;
         }
         if (!shards_[0]->get("general.architecture"))

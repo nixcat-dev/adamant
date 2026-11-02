@@ -31,6 +31,10 @@ python3 tools/convert/convert.py --gguf MODEL-00001-of-0000N.gguf --mmproj MMPRO
 
 `python3 tools/convert/convert.py --help` describes every input.
 
+A single file cut out of a split download keeps that download's `split.count` and `split.tensors.count`, which describe
+the model it came from rather than the file. It opens as a whole model when every tensor it declares lies inside it,
+and is refused as cut short otherwise; the shards of a split model are still checked against those keys.
+
 ## Packs
 
 A pack you convert yourself from a GGUF, without the official files' tuned drafter, will be significantly slower than the official `.basalt` files. How precision is handled and how quality is measured: [precision](precision/index.md).

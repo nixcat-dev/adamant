@@ -196,8 +196,37 @@ int main(int argc, char** argv) {
         });
         check(error_of(paths).find("general.architecture") != std::string::npos,
               "a split model whose first shard has no metadata is refused");
-        check(error_of({paths[0]}).find("opened as a whole model") != std::string::npos,
-              "shard 1 of 4 opened as a whole model is refused");
+        check(error_of({paths[0]}).find("holds no tensors") != std::string::npos,
+              "shard 1 of 4, which holds no tensor, opened as a whole model is refused");
+    }
+    {
+        // A single file cut out of a split model keeps that model's split keys, so the keys cannot decide whether
+        // the payload is whole; every tensor lying inside the file can.
+        TempDir d;
+        const std::vector<fixture::Kv> kv = [] {
+            std::vector<fixture::Kv> k{fixture::str("general.architecture", "qwen4exp")};
+            for (const auto& s : fixture::split_keys(0, 4, 3)) k.push_back(s);
+            return k;
+        }();
+        const std::vector<Tensor> ts = {{"output.weight", {64, 4}, Q8_0, 1},
+                                        {"token_embd.weight", {64, 4}, Q8_0, 2},
+                                        {"blk.11.ffn_down_exps.weight", {32, 32, 2}, F32, 3}};
+        const fs::path whole = d.path / "extracted.gguf";
+        fixture::write(whole, kv, ts);
+        std::string err;
+        bool found = false;
+        try {
+            const basalt::GgufModel m({whole.string()});
+            size_t s = 9;
+            const basalt::TensorInfo* t = m.find("token_embd.weight", &s);
+            found = t && s == 0 && m.in_bounds(*t, 0);
+        } catch (const std::exception& e) { err = e.what(); }
+        check(err.empty() && found, "one file cut out of a 4-shard set, tensors whole, opens as a whole model" +
+                                        (err.empty() ? std::string() : ": " + err));
+        const fs::path cut = d.path / "extracted-cut.gguf";
+        fixture::write(cut, kv, ts, 100);
+        check(error_of({cut.string()}).find("cut short") != std::string::npos,
+              "the same file, cut short, is refused as cut short");
     }
     {
         TempDir d;
