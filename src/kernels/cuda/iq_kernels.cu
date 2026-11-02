@@ -2684,10 +2684,10 @@ void launch_gu(dim3 grid, cudaStream_t s, const unsigned long long* grp_ptr, con
 template<int TD>
 void launch_down(dim3 grid, cudaStream_t s, const unsigned long long* grp_ptr, const int32_t* grp_start,
                  const int32_t* n_groups, const int32_t* ent_dst, const block_q8_1* hq, const NativeExpertLayout& L,
-                 float* out, bool dep = false) {
+                 float* out, bool prefetch_weights = false) {
     if constexpr (!kSplit<TD>) native_down_kernel<TD><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_dst, hq, L, out);
     else if (g_old_kernels) native_down_kernel<TD><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_dst, hq, L, out);
-    else if (dep) launch_dependent(native_down_multi_kernel<TD, true>, grid, s, grp_ptr, grp_start, n_groups, ent_dst, hq, L, out);
+    else if (prefetch_weights) native_down_multi_kernel<TD, true><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_dst, hq, L, out);
     else native_down_multi_kernel<TD><<<grid, 256, 0, s>>>(grp_ptr, grp_start, n_groups, ent_dst, hq, L, out);
 }
 
@@ -2849,9 +2849,9 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
     block_q8_1* hq = (block_q8_1*) ((uint8_t*) scratch + 3 * fa);
     const auto* X = (const block_q8_1*) x_q8_1;
     const bool v1 = g_grouped_v1;
-    const bool chain = g_gu2 >= 2 && !v1 && !g_old_kernels;   // SwiGLU and down as dependents
+    const bool prefetch_down = g_gu2 >= 2 && !v1 && !g_old_kernels;
     int64_t gy = (v1 || grid_groups <= 0 || grid_groups > cap_groups) ? cap_groups : grid_groups;
-    if (chain && grid_groups <= 0 && g_dec_gy > 0 && gy > g_dec_gy) gy = g_dec_gy;
+    if (prefetch_down && grid_groups <= 0 && g_dec_gy > 0 && gy > g_dec_gy) gy = g_dec_gy;
     const dim3 ggu((unsigned) ((2 * L.n_ff + GU_ROWS - 1) / GU_ROWS), (unsigned) gy);
     if (g_exp_phase != 2) {
     switch (L.gu_type) {
@@ -2866,9 +2866,6 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
     if (sw_v1) {
         swiglu_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, h, nh);
         quantize_q8_1_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(h, hq, nh);
-    } else if (chain) {
-        launch_dependent(swiglu_q8_1_entries_pdl_kernel, dim3((unsigned) ((nh + 255) / 256)), s, (const float*) gate,
-                         (const float*) up, grp_start, n_groups, (int) L.n_ff, hq);
     } else {
         swiglu_q8_1_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, grp_start, n_groups,
                                                                                 (int) L.n_ff, hq);
@@ -2879,7 +2876,7 @@ void native_expert_grouped(const NativeExpertLayout& L, const unsigned long long
     const int d_rows = (!g_old_kernels && L.n_ff == 640) ? (kDown40Type(L.d_type) ? 32 : (L.d_type == 42 ? 16 : 8)) : 8;
     const dim3 gd((unsigned) ((L.n_embd + d_rows - 1) / d_rows), (unsigned) gy);
     switch (L.d_type) {
-#define DOWN_CASE(T) case T: launch_down<T>(gd, s, grp_ptr, grp_start, n_groups, ent_dst, hq, L, out, chain); break;
+#define DOWN_CASE(T) case T: launch_down<T>(gd, s, grp_ptr, grp_start, n_groups, ent_dst, hq, L, out, prefetch_down); break;
         D_FMTS(DOWN_CASE)
 #undef DOWN_CASE
         default: basalt::log::error("basalt", "native_expert_grouped: down type %d", L.d_type); std::exit(1);

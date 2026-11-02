@@ -4,7 +4,6 @@
 #include "basalt/core/native_head.hpp"
 #include "basalt/prefill/gemm.hpp"
 #include "basalt/prefill/moe_mmq.hpp"
-#include "basalt/prefill/moe_fp4.hpp"
 #include "basalt/prefill/kernels.hpp"
 #include "basalt/log.hpp"
 #include <algorithm>
@@ -16,7 +15,7 @@ using namespace detail;
 void Prefill::Run::Chunk::Experts::Group::prepare_products() {
     if (use_mmq) {
         // the layer's activations as q8_1 rows in expert order, straight from `mixed`
-        if (!fp4_l) mmq::quantize(m.mixed, m.src_dev, m.Xq, mmq_gt, N, N, T * K, m.cs);
+        mmq::quantize(m.mixed, m.src_dev, m.Xq, mmq_gt, N, N, T * K, m.cs);
         // each group's rows: absolute bounds (gate/up reads the layer's rows), relative ones (down
         // reads the group's own quantized H)
         const size_t n = order.size(), ng = (n + MMQ_GROUP - 1) / MMQ_GROUP;
@@ -35,10 +34,6 @@ void Prefill::Run::Chunk::Experts::Group::prepare_products() {
             cudaMemcpyAsync(m.bounds_dev, m.bounds_host.data(), m.bounds_host.size() * 4,
                             cudaMemcpyHostToDevice, m.cs);
         }
-        if (fp4_l) {   // the activations as FP4, once per token: the gate/up product reads a row's token
-            const Fp4Ptrs fp = fp4_ptrs(m.Xq, m.Hq, m.T, m.g->n_expert);
-            fp4::quantize_tokens(m.mixed, T, N, N, fp.a4x, fp.gsx, m.cs);
-        }
     } else {
         gather_rows16(m.mixed_h, m.src_dev, m.Xs, T * K, N, m.cs);
     }
@@ -46,7 +41,6 @@ void Prefill::Run::Chunk::Experts::Group::prepare_products() {
 }
 
 void Prefill::Run::Chunk::Experts::Group::flush() {
-    if (fp4_l) { fp4_flush(); return; }
     if (gg.n <= gg.first) return;
     const auto& f = lay.fmt[(size_t) l];
     if (gg_nslots > 0) {   // the copies land in order: the last one covers the others

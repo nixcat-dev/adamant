@@ -13,7 +13,7 @@
 namespace basalt::kernels {
 namespace {
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+#if defined(__CUDA_ARCH__)
 // dense_tc_tile_block over the tiles of one half: the block's tile i is the half's tile j = blk + i * nblk, which is
 // the projection's tile 32 (j / 16) + 16 half + j % 16; every step of a tile is dense_tc_tile_block's.  Two tiles in
 // flight per block.  early: the dependents are let in at the start, else once the last tile is read.
@@ -23,7 +23,6 @@ __device__ __forceinline__ void qproj_half_block(int blk, int nblk, int half, bo
                                                  float* __restrict__ y, int n_in, int n_out, int ncols) {
     constexpr int NS = 2;
     constexpr int SB = Fmt<TYPE>::SB, CB = 2 * SB;
-    uint64_t* bar = reinterpret_cast<uint64_t*>(smem);
     float* red = reinterpret_cast<float*>(smem + 128);   // [warp][row][column]
     uint8_t* slots = smem + 128 + 8 * 16 * kMaxCols * 4;
     const int tid = threadIdx.x, wp = tid >> 5, lane = tid & 31, g = lane >> 2, t = lane & 3;
@@ -37,42 +36,24 @@ __device__ __forceinline__ void qproj_half_block(int blk, int nblk, int half, bo
         const int j = blk + i * nblk;
         return 32 * (j / 16) + 16 * half + j % 16;
     };
-    // tile i into slot i % NS by warp 0 (whole tiles: n_out is a multiple of 16)
+    // tile i into slot i % NS (whole tiles: n_out is a multiple of 16)
     auto issue = [&](int i) {
         const int tile = tile_of(i);
-        const uint32_t sb = (uint32_t) __cvta_generic_to_shared(slots + (size_t) (i % NS) * ts);
-        const uint32_t bb = (uint32_t) __cvta_generic_to_shared(bar + (i % NS));
-        const uint32_t bytes = (uint32_t) ((16 * row_bytes + 15) & ~15);
-        if (lane == 0) {
-            asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" ::"r"(bb), "r"(bytes) : "memory");
-            asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
-                         ::"r"(sb), "l"(w + (size_t) tile * tb), "r"(bytes), "r"(bb) : "memory");
-        }
+        stage_bytes(slots + (size_t) (i % NS) * ts, w + (size_t) tile * tb, ts, tid, 256);
     };
-    if (wp == 0) {
-        if (lane == 0) {
-            for (int q = 0; q < NS; ++q)
-                asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" ::"r"((uint32_t) __cvta_generic_to_shared(bar + q)));
-            asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
-        }
-        __syncwarp();
-        for (int i = 0; i < NS && i < mine; ++i) issue(i);
-    }
-    __syncthreads();
+    if (0 < mine) issue(0);
+    stage_commit();
+    if (1 < mine) issue(1);
+    stage_commit();
+    __syncthreads();   // every thread's copies are issued: the run of groups is the same in every thread
     pdl_wait();
     const uint32_t* tbl = reinterpret_cast<const uint32_t*>(dtc_iq4nl);
     uint32_t t0 = 0, t1 = 0, t2 = 0, t3 = 0;
     if constexpr (TYPE == 23) { t0 = tbl[0]; t1 = tbl[1]; t2 = tbl[2]; t3 = tbl[3]; }
     for (int i = 0; i < mine; ++i) {
         const int row0 = tile_of(i) * 16;
-        {
-            uint32_t done = 0;
-            const uint32_t bb = (uint32_t) __cvta_generic_to_shared(bar + (i % NS)), par = (uint32_t) (i / NS) & 1u;
-            do {
-                asm volatile("{\n .reg .pred p;\n mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2;\n"
-                             " selp.u32 %0, 1, 0, p;\n}" : "=r"(done) : "r"(bb), "r"(par) : "memory");
-            } while (!done);
-        }
+        stage_wait_ahead();   // slot i is in; slot i + 1's copies may still be moving
+        __syncthreads();
         const uint8_t* slot = slots + (size_t) (i % NS) * ts;
         const uint8_t* rowA = slot + g * row_bytes + sbi * SB;
         const uint8_t* rowB = slot + (g + 8) * row_bytes + sbi * SB;
@@ -106,10 +87,8 @@ __device__ __forceinline__ void qproj_half_block(int blk, int nblk, int half, bo
         rw[(g + 8) * kMaxCols + 2 * t + 1] = acc[3];
         if (!early && i == mine - 1) pdl_launch_dependents();
         __syncthreads();   // the slot is read and the warp sums are in
-        if (wp == 0 && i + NS < mine) {
-            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
-            issue(i + NS);
-        }
+        if (i + NS < mine) issue(i + NS);
+        stage_commit();
         if (tid < 16 * kMaxCols) {
             const int row = tid / kMaxCols, col = tid % kMaxCols;
             if (col < ncols) {
@@ -122,6 +101,7 @@ __device__ __forceinline__ void qproj_half_block(int blk, int nblk, int half, bo
         }
         __syncthreads();   // the sums are read
     }
+    stage_wait_all();
     if (!early && mine == 0) pdl_launch_dependents();
 }
 #endif
@@ -129,11 +109,9 @@ __device__ __forceinline__ void qproj_half_block(int blk, int nblk, int half, bo
 template<int TYPE>
 __global__ void __launch_bounds__(256) qproj_half_kernel(const uint8_t* __restrict__ w, const uint8_t* __restrict__ x,
                                                          float* __restrict__ y, int n_in, int n_out, int ncols, int half) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 900
+#if defined(__CUDA_ARCH__)
     extern __shared__ __align__(128) uint8_t smem_qh[];
     qproj_half_block<TYPE>((int) blockIdx.x, (int) gridDim.x, half, half == 1, smem_qh, w, x, y, n_in, n_out, ncols);
-#elif defined(__CUDA_ARCH__)
-    __trap();
 #endif
 }
 

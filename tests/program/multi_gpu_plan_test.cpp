@@ -25,7 +25,8 @@ static GpuCard card(int smi, const char* name, double gbps, uint64_t gib) {
     c.token = std::to_string(smi);
     c.smi = smi;
     c.name = name;
-    c.cc_major = 12;
+    c.cc_major = 8;
+    c.cc_minor = 9;
     c.mem_gbps = gbps;
     c.vram = gib * GiB;
     return c;
@@ -48,9 +49,9 @@ static const MgPrice& price(const MgPlan& p, Mechanism m) {
 static double tok_s(double ms) { return 2.15 * 1000.0 / ms; }
 
 int main() {
-    // unlike cards (a 5090 and a 5060 Ti): the expert tier, the split loses to it by far
+    // Unlike synthetic cards: the expert tier wins over the split.
     {
-        const MgPlan p = plan_multi_gpu({card(0, "RTX 5090", 1792, 32), card(1, "RTX 5060 Ti", 448, 16)}, model());
+        const MgPlan p = plan_multi_gpu({card(0, "synthetic-fast", 1792, 32), card(1, "synthetic-slow", 448, 16)}, model());
         CHECK(!p.equal);
         CHECK(p.pick == Mechanism::ExpertTier);
         const double tier = price(p, Mechanism::ExpertTier).ms, split = price(p, Mechanism::LayerSplit).ms;
@@ -58,9 +59,9 @@ int main() {
         CHECK(split > 12.0 && split < 16.0);      // measured 13.5 ms (the cut at layer 40)
         CHECK(p.line.find("expert tier") != std::string::npos && p.line.find("picked expert tier") != std::string::npos);
     }
-    // two equal 16 GB cards (2 x RTX 5080): the expert tier within 10% of the reported pair rate, the split far behind
+    // two equal 16 GB cards (2 x synthetic-mid): the expert tier within 10% of the reported pair rate, the split far behind
     {
-        const MgPlan p = plan_multi_gpu({card(0, "RTX 5080", 960, 16), card(1, "RTX 5080", 960, 16)}, model());
+        const MgPlan p = plan_multi_gpu({card(0, "synthetic-mid", 960, 16), card(1, "synthetic-mid", 960, 16)}, model());
         CHECK(p.equal);
         CHECK(p.pick == Mechanism::ExpertTier);
         const double rate = tok_s(price(p, Mechanism::ExpertTier).ms);
@@ -71,7 +72,7 @@ int main() {
     // three and four equal cards, and equal cards big enough to hold every expert: priced, one line, a valid pick
     for (int n = 2; n <= 4; ++n) {
         std::vector<GpuCard> v;
-        for (int i = 0; i < n; ++i) v.push_back(card(i, "RTX 5090", 1792, 32));
+        for (int i = 0; i < n; ++i) v.push_back(card(i, "synthetic-fast", 1792, 32));
         const MgPlan p = plan_multi_gpu(v, model());
         CHECK(p.equal && p.prices.size() == 3 && !p.line.empty());
         CHECK(p.line.find(std::to_string(n) + " cards") != std::string::npos);
@@ -84,12 +85,12 @@ int main() {
     CHECK(cards_alike(card(0, "a", 0, 0), card(1, "b", 960, 16)));   // unknown figures match
     // one card: no choice at all
     {
-        const MgPlan p = plan_multi_gpu({card(0, "RTX 5090", 1792, 32)}, model());
+        const MgPlan p = plan_multi_gpu({card(0, "synthetic-fast", 1792, 32)}, model());
         CHECK(p.prices.empty() && p.line.empty());
     }
     // the gpu setting: a single card, whichever is named, makes no multi-card choice and narrows the CUDA view to it
     {
-        const std::vector<GpuCard> v = {card(0, "RTX 5090", 1792, 32), card(1, "RTX 5060 Ti", 448, 16), card(2, "RTX 5080", 960, 16)};
+        const std::vector<GpuCard> v = {card(0, "synthetic-fast", 1792, 32), card(1, "synthetic-slow", 448, 16), card(2, "synthetic-mid", 960, 16)};
         for (const char* text : {"", "0", "1", "2"}) {
             GpuSpec s;
             std::string err;
@@ -102,7 +103,7 @@ int main() {
             CHECK(r.size() == 1 && r[0] == GpuRole::Main);   // no tier, no idle card
             apply_gpus(v, c.cards);
             const char* env = std::getenv("CUDA_VISIBLE_DEVICES");
-            CHECK(env != nullptr && std::string(env) == v[(size_t) c.cards[0]].token);   // the other cards are hidden
+            CHECK(c.cards.size() == 1 && env != nullptr && std::string(env) == v[(size_t) c.cards[0]].token);   // the other cards are hidden
         }
         // two cards named: both are used, the first is main
         GpuSpec s;

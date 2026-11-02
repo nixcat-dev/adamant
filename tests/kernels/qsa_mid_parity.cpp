@@ -16,6 +16,7 @@
 #include "basalt/kernels/qsa_mid.hpp"
 
 #include <cuda_runtime.h>
+#include "basalt/cuda_target.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -212,8 +213,8 @@ int main(int argc, char** argv) {
     }
     cudaDeviceProp pr;
     cudaGetDeviceProperties(&pr, 0);
-    if (pr.major < 9) {
-        std::printf("qsa_mid_parity: needs compute capability 9.0+\n");
+    if (!basalt::cuda_target::supports(pr.major, pr.minor)) {
+        std::printf("qsa_mid_parity: needs compute capability 8.9\n");
         return 77;
     }
     cudaStream_t s;

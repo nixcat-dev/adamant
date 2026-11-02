@@ -5,7 +5,7 @@
 //
 // Every value is the one the per-stage kernels produce (gdn_conv_l2_multi, gdn_ab_multi, gdn_step_norm_multi,
 // native_quantize_q8_1): the same operations on the same values in the same order, so a token's outputs do not
-// depend on T or its column.  Needs thread-block clusters.
+// depend on T or its column. Four column groups share a block for the fused norm.
 #pragma once
 
 #include <cstddef>
@@ -42,11 +42,10 @@ struct DecRecArgs {
     int k0 = 0, nk = 0;
     float* qkv_out = nullptr;
     unsigned long long* stamps = nullptr;   // bench: 10 per-phase timestamps per block
-    bool early_trigger = true;   // let the next kernel launch once the constants are loaded
 };
 
-/// The recurrence of tokens [0, n_tok) from the untouched state; one cluster of four blocks per value head (of the
-/// head map's value heads when a.nk > 0).
+/// The recurrence of tokens [0, n_tok) from the untouched state; one block per value head
+/// (of the head map's value heads when a.nk > 0).
 void dec_gdn_rec(const DecRecArgs& a, int n_tok, void* stream);
 
 /// dec_gdn_rec over a segmented window (verify_kernels.hpp SegRow): each segment's tokens from its own state (the

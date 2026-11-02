@@ -4,7 +4,6 @@
 #include "basalt/core/progress.hpp"
 #include "basalt/core/layout.hpp"
 #include "basalt/prefill/moe_fused.hpp"
-#include "basalt/prefill/moe_fp4.hpp"
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/prefill/kernels.hpp"
 #include "basalt/log.hpp"

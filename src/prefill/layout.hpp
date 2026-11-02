@@ -58,27 +58,8 @@ struct MmqPlan {
     size_t gu_max = 0, d_max = 0;
 };
 
-// A chunk shorter than this leaves most expert tiles nearly empty and the per-expert launches dominate: MMQ is faster.
-constexpr int64_t FP4_MIN_TOKENS = 1024;
-// The peer computes its experts' rows of a streamed chunk of up to this many
-// tokens (PeerPrefill::T_fp4).  The layer's activations go to it and its rows come back through host memory, and the
-// layer's end waits for that round trip; it grows with the chunk while the blobs it saves do not, so a longer chunk
-// streams the blobs instead.
-constexpr int64_t kPeerFp4Tokens = 5120;
 // A peer card slower than the main one takes the rows of routed-only chunks up to this size, no more.
 constexpr int64_t kPeerSlowRows = 2559;
-// In such a chunk the issuing thread keeps at most this many expert copies queued on the primary's link (the ring still
-// runs as far ahead): copies on one link are served in the order they were queued, and the peer's result rows, which
-// the layer's end waits for, would otherwise queue behind the copies for the layers after it.
-constexpr int kPeerInFlight = 16;
-constexpr size_t al256(size_t v) { return (v + 255) & ~(size_t) 255; }
-
-struct Fp4Ptrs {
-    uint8_t *a4x, *a4h;
-    float *gsx, *gsh;
-    int32_t *toh, *rel;
-};
-// Where the FP4 path's tables sit in Xq (the layer's token planes) and Hq (a group's H), as moe_bufs sized them.
 
 const MmqPlan& mmq_plan();
 float* grp_scales(uint8_t* grp_d);
@@ -92,11 +73,5 @@ uint64_t qsa_set_bytes(size_t T, int64_t cap, int64_t max_blocks, int64_t sel_ba
                        const basalt::kernels::QsaShapes& s);
 uint64_t moe_set_bytes(size_t T, int64_t n_expert, bool fused);
 bool fused_layout(size_t T, bool src);
-bool fp4_pack();
-size_t fp4_x_bytes(size_t rows, int64_t ne);
-size_t fp4_h_bytes(size_t rows);
-bool fp4_every_layer();
-size_t group_rows_cap(size_t T);
-Fp4Ptrs fp4_ptrs(void* xq, void* hq, int64_t T, int64_t n_expert);
 
 }  // namespace basalt::prefill::detail

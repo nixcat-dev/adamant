@@ -16,7 +16,6 @@
 #include "basalt/prefill/moe_fused.hpp"
 #include "basalt/prefill/moe_fused_iq.hpp"
 #include "basalt/prefill/moe_mmq.hpp"
-#include "basalt/prefill/moe_fp4.hpp"
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/prefill/kernels.hpp"
 #include "basalt/log.hpp"
@@ -148,75 +147,14 @@ bool fused_layout(size_t T, bool src) {
 // The MoE buffers MMQ and the fused path share: GU and H in floats, Xq and Hq in bytes.  Without `fused` (the
 // default): MMQ's, for T tokens.
 struct MoeBufs { size_t gu, h, xq, hq; };
-// An NVFP4 pack's prompt experts run on the FP4 tensor cores: the activation planes, token scales and tile tables sit
-// in Xq (the layer's rows) and Hq (one group's H, a group of up to MMQ_GROUP experts).
-bool fp4_pack() {
-    static const bool any = [] {
-        const auto& lay = basalt::kernels::cpu::expert_layout();
-        if (!lay.native) return false;
-        for (const auto& f : lay.fmt)
-            if (f.gu_type == GGML_TYPE_NVFP4 && f.d_type == GGML_TYPE_NVFP4 && f.tail != 0) return true;
-        return false;
-    }();
-    return any;
-}
-size_t fp4_x_bytes(size_t rows, int64_t ne) {
-    return al256(fp4::a4_bytes((int64_t) rows, N, (int) ne)) + al256(fp4::scale_count((int64_t) rows, (int) ne) * 4) +
-           al256((size_t) (ne + 1) * 4);
-}
-size_t fp4_h_bytes(size_t rows) {
-    return al256(fp4::a4_bytes((int64_t) rows, 640, MMQ_GROUP)) + al256(fp4::scale_count((int64_t) rows, MMQ_GROUP) * 4) +
-           al256((size_t) 2 * (MMQ_GROUP + 1) * 4);
-}
-// Every layer's experts are NVFP4 on the FP4 path, so a chunk of FP4_MIN_TOKENS or more never runs MMQ.
-bool fp4_every_layer() {
-    static const bool all = [] {
-        const auto& lay = basalt::kernels::cpu::expert_layout();
-        const MmqPlan& mp = mmq_plan();
-        if (!lay.native || lay.fmt.empty() || !mp.any || mp.layer.size() < lay.fmt.size()) return false;
-        for (size_t l = 0; l < lay.fmt.size(); ++l)
-            if (!mp.layer[l] || lay.fmt[l].gu_type != GGML_TYPE_NVFP4 || lay.fmt[l].d_type != GGML_TYPE_NVFP4 ||
-                lay.fmt[l].tail == 0)
-                return false;
-        return true;
-    }();
-    return all;
-}
-// Rows of GU and H a group's products hold at once.  The FP4 path indexes them by the group's own rows and splits a
-// group above this cap (an expert has at most T rows); a chunk below FP4_MIN_TOKENS runs MMQ, which indexes them by
-// the layer's absolute row, so the cap also covers that chunk's rows.
-size_t group_rows_cap(size_t T) {
-    if (!(fp4_every_layer() && (int64_t) T >= FP4_MIN_TOKENS)) return T * K;
-    return std::min(T * K, std::max(T, (size_t) (FP4_MIN_TOKENS - 1) * K));
-}
 MoeBufs moe_bufs(size_t T, int64_t n_expert, bool fused) {
-    if (!fused) {
-        // MMQ's int8 planes are only needed for rows a chunk below FP4_MIN_TOKENS runs; the FP4 planes cover the rest
-        const size_t qt = fp4_every_layer() && (int64_t) T >= FP4_MIN_TOKENS ? (size_t) (FP4_MIN_TOKENS - 1) : T;
-        const size_t gr = group_rows_cap(T);
-        size_t xq = mmq::q8_bytes((int64_t) (qt * K), N), hq = mmq::q8_bytes((int64_t) (qt * K), 640);
-        if (fp4_pack()) { xq = std::max(xq, fp4_x_bytes(T * K, n_expert)); hq = std::max(hq, fp4_h_bytes(gr)); }
-        return {gr * 1280, gr * 640, xq, hq};
-    }
+    if (!fused) return {T * K * 1280, T * K * 640, mmq::q8_bytes((int64_t) (T * K), N),
+                        mmq::q8_bytes((int64_t) (T * K), 640)};
     const size_t ts = (size_t) std::min<int64_t>((int64_t) T, stream_all_min() - 1);   // MMQ's last small chunk
     return {std::max(ts * K * 1280, (fused::group_bytes((int64_t) (T * K), (int) n_expert) + 3) / 4),
             std::max(ts * K * 640, (fused::act_bytes((int64_t) (T * K), 640) + 3) / 4),
             std::max(mmq::q8_bytes((int64_t) (ts * K), N), fused::act_bytes((int64_t) T, N)),
             mmq::q8_bytes((int64_t) (ts * K), 640)};
-}
-Fp4Ptrs fp4_ptrs(void* xq, void* hq, int64_t T, int64_t n_expert) {
-    const size_t rows = (size_t) (T * K), ne = (size_t) n_expert;
-    Fp4Ptrs p;
-    uint8_t* x = (uint8_t*) xq;
-    p.a4x = x;
-    p.gsx = (float*) (x + al256(fp4::a4_bytes((int64_t) rows, N, (int) ne)));
-    uint8_t* h = (uint8_t*) hq;
-    p.a4h = h;
-    const size_t hrows = group_rows_cap((size_t) T);
-    p.gsh = (float*) (h + al256(fp4::a4_bytes((int64_t) hrows, 640, MMQ_GROUP)));
-    p.toh = (int32_t*) ((uint8_t*) p.gsh + al256(fp4::scale_count((int64_t) hrows, MMQ_GROUP) * 4));
-    p.rel = p.toh + (MMQ_GROUP + 1);
-    return p;
 }
 uint64_t moe_set_bytes(size_t T, int64_t n_expert, bool fused) {
     const MmqPlan& mp = mmq_plan();
@@ -363,7 +301,6 @@ void Prefill::set_cpu_share(double share) { impl_->cpu_share_now = std::max(0.0,
 void Prefill::set_ring_depth(int slots) { g_ring_depth = std::max(STAGE + 1, std::min(slots, kPrefillRingDeep)); }
 int Prefill::ring_depth() const { return impl_->ring; }
 double Prefill::pinned_share() { return g_pinned_share; }
-bool Prefill::fp4_experts() { return fp4_pack(); }
 
 namespace { constexpr uint64_t kSizingSlack = 8u << 20; }   // alignment slack of a borrowed region
 

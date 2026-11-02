@@ -22,7 +22,6 @@ static __global__ void quantize_mmq_q8_1(
     }
 
     const int64_t i00 = i0;
-    ggml_cuda_pdl_sync();
 
     const int64_t i2  = blockIdx.z % ne2;
     const int64_t i3  = blockIdx.z / ne2;

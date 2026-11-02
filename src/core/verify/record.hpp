@@ -61,7 +61,6 @@ struct Verifier::WindowRecorder {
     const int hrow0 = v_.batch_rec_ ? v_.row_base_ : 0;   // a slot group's own hand-off rows
 
     bool ple_side = false;
-    bool ple_open = false;   // the PLE side branch is forked and not joined yet
     const int32_t* pos_k = nullptr;
     const int32_t* pos_i = nullptr;
     const int64_t HB = Verifier::handoff_floats(g);
@@ -71,7 +70,6 @@ struct Verifier::WindowRecorder {
     kernels::GdnCommitLayers lazy_args{};
     bool lz_open = false;   // a lazy launch not joined yet
     bool ring_fork = false;   // the group's ring stream is joined in post
-    int mid_ord = 0;   // the mid chain's launches so far in this graph
     bool glue_on = false;   // post's gate/up launch plans the group's VRAM share
     bool sh_read = false;   // the FFN read gave the shared expert its gate and q8_1 rows; post's combine gates it
     kernels::DmRouteArgs glue_ring;   // the ring's work for post's gate/up launch

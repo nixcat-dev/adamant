@@ -1,7 +1,7 @@
 # basalt: a local inference engine for one NVIDIA GPU.
 cmake_minimum_required(VERSION 3.24)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-  set(CMAKE_CUDA_ARCHITECTURES 120 CACHE STRING "CUDA architectures" FORCE)
+  set(CMAKE_CUDA_ARCHITECTURES 89 CACHE STRING "CUDA architectures" FORCE)
 endif()
 project(basalt VERSION 0.1.0 LANGUAGES C CXX CUDA)
 add_compile_definitions(BASALT_VERSION="${PROJECT_VERSION}")
@@ -39,9 +39,9 @@ endfunction()
 find_package(CUDAToolkit REQUIRED)
 # One architecture only: the kernels use its instructions and nothing else is tested.
 foreach(_a IN LISTS CMAKE_CUDA_ARCHITECTURES)
-  string(REGEX REPLACE "[-a].*$" "" _base "${_a}")     # 120-real / 120a are still 120
-  if(NOT _base STREQUAL "120")
-    message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES is '${CMAKE_CUDA_ARCHITECTURES}': basalt builds for compute capability 12.0 only")
+  string(REGEX REPLACE "-(real|virtual)$" "" _base "${_a}")
+  if(NOT _base STREQUAL "89")
+    message(FATAL_ERROR "CMAKE_CUDA_ARCHITECTURES is '${CMAKE_CUDA_ARCHITECTURES}': Adamant builds for compute capability 8.9 only")
   endif()
 endforeach()
 if(CMAKE_CUDA_COMPILER_VERSION VERSION_LESS 13.0)
@@ -234,7 +234,6 @@ add_library(kernels STATIC src/kernels/cuda/dequant_s2.cu src/kernels/cuda/s2_ge
                         src/kernels/cuda/verify_kernels.cu
                         src/kernels/cuda/dec_gdn_rec.cu
                         src/kernels/cuda/dense_tc.cu
-                        src/kernels/cuda/mid_chain.cu
                         src/kernels/cuda/qsa_mid.cu
                         src/kernels/cuda/wait_abort.cu
                         src/kernels/cuda/iq_kernels.cu
@@ -466,7 +465,6 @@ add_library(prefill STATIC src/prefill/gemm.cu src/prefill/kernels.cu src/prefil
   src/prefill/experts.cpp
   src/prefill/expert_fused.cpp
   src/prefill/expert_mmq.cpp
-  src/prefill/expert_fp4.cpp
   src/prefill/expert_fp16.cpp
   src/prefill/peer_experts.cpp
   src/prefill/expert_stream.cpp
@@ -740,7 +738,7 @@ set_tests_properties(dec_gdn_parity PROPERTIES SKIP_RETURN_CODE 77)
 # no model; --bench)
 add_executable(gdn_head_split_parity tests/kernels/gdn_head_split_parity.cpp)
 target_include_directories(gdn_head_split_parity PRIVATE ${_gpu_include_directories})
-target_link_libraries(gdn_head_split_parity PRIVATE kernels artifact ${_gpu_runtime_target})
+target_link_libraries(gdn_head_split_parity PRIVATE kernels artifact Threads::Threads ${_gpu_runtime_target})
 basalt_gpu_test(NAME gdn_head_split_parity COMMAND gdn_head_split_parity)
 set_tests_properties(gdn_head_split_parity PROPERTIES SKIP_RETURN_CODE 77)
 # the peer table update by kernel and the counter zeroing against the span copy and memset they replace, bitwise
@@ -774,7 +772,7 @@ set_tests_properties(pair_snapshot_parity PROPERTIES SKIP_RETURN_CODE 77)
 # dense_tc (DEC_DTC) against native_mmvq: its columns' T contract bitwise, its error vs the dp4a kernels
 add_executable(dense_tc_parity tests/kernels/dense_tc_parity.cpp)
 target_include_directories(dense_tc_parity PRIVATE ${_gpu_include_directories})
-target_link_libraries(dense_tc_parity PRIVATE kernels ${_gpu_runtime_target})
+target_link_libraries(dense_tc_parity PRIVATE kernels ggml_quants ${_gpu_runtime_target})
 basalt_gpu_test(NAME dense_tc_parity COMMAND dense_tc_parity)
 set_tests_properties(dense_tc_parity PROPERTIES SKIP_RETURN_CODE 77)
 # the DEC_COMMIT launches against the commit graph's per-layer calls, bitwise (synthetic, GPU; --bench)
@@ -825,20 +823,6 @@ add_executable(hc_fused_parity tests/kernels/hc_fused_parity.cpp)
 target_include_directories(hc_fused_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(hc_fused_parity PRIVATE kernels ${_gpu_runtime_target})
 basalt_gpu_test(NAME hc_fused_parity COMMAND hc_fused_parity 20 1 8 --check-only --stress 200)
-add_executable(mid_chain_parity tests/kernels/mid_chain_parity.cpp)
-target_include_directories(mid_chain_parity PRIVATE ${_gpu_include_directories})
-target_link_libraries(mid_chain_parity PRIVATE kernels ${_gpu_runtime_target})
-basalt_gpu_test(NAME mid_chain_parity COMMAND mid_chain_parity 20)
-set_tests_properties(mid_chain_parity PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
-# mid_chain with one SM held (mid_chain_parity --hold), built with a short wait bound: below it the launch waits for the
-# release and is bitwise, past it the waits give up through the abort word instead of trapping
-add_executable(mid_chain_hold tests/kernels/mid_chain_parity.cpp src/kernels/cuda/mid_chain.cu)
-target_include_directories(mid_chain_hold PRIVATE ${_gpu_include_directories})
-target_compile_definitions(mid_chain_hold PRIVATE MKB_NS=200000000ull)
-target_link_libraries(mid_chain_hold PRIVATE kernels ${_gpu_runtime_target})
-basalt_gpu_test(NAME mid_chain_hold COMMAND mid_chain_hold 1 --hold 50)
-basalt_gpu_test(NAME mid_chain_hold_abort COMMAND mid_chain_hold 1 --hold 600)
-set_tests_properties(mid_chain_hold mid_chain_hold_abort PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
 add_executable(qsa_mid_parity tests/kernels/qsa_mid_parity.cpp)
 target_include_directories(qsa_mid_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(qsa_mid_parity PRIVATE kernels ggml_quants ${_gpu_runtime_target})
@@ -879,6 +863,9 @@ basalt_gpu_test(NAME rope_parity COMMAND rope_parity --selftest)
 add_executable(quantize_act_parity tests/kernels/quantize_act_parity.cpp)
 target_include_directories(quantize_act_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(quantize_act_parity PRIVATE kernels ${_gpu_runtime_target})
+if(NOT MSVC)
+  target_compile_options(quantize_act_parity PRIVATE -ffp-contract=off)
+endif()
 basalt_gpu_test(NAME quantize_act_parity COMMAND quantize_act_parity --selftest)
 
 # the verify window's routing in one multi-column BF16 projection + one top-k, bitwise the per-token calls
@@ -1233,6 +1220,10 @@ target_link_libraries(kernels_cpu PUBLIC Threads::Threads platform)
 add_library(ggml_quants STATIC src/kernels/cpu/ggml/ggml_quants.c)
 target_include_directories(ggml_quants PUBLIC include PRIVATE src/kernels/cpu/ggml)
 set_target_properties(ggml_quants PROPERTIES C_STANDARD 11 C_EXTENSIONS ON POSITION_INDEPENDENT_CODE ON)
+# Quantization rounds the product before the integer-rounding offset is added.
+if(NOT MSVC)
+  target_compile_options(ggml_quants PRIVATE -ffp-contract=off)
+endif()
 # The CPU dot products are built for AVX2 and for AVX-512, each with its own name for the table lookup;
 # ggml_cpu_dispatch.cpp picks one at run time (cpu_avx512_ok / cpu_avx2_ok).
 set(_ggml_dots_avx2_flags ${_isa_avx2_flags})
@@ -1304,12 +1295,6 @@ if(MSVC)
 endif()
 target_link_libraries(mmq PUBLIC ggml_quants ${_gpu_runtime_target})
 target_link_libraries(prefill PUBLIC mmq)
-# the FP4 block-scaled tensor-core experts (need the a-variant of the architecture)
-add_library(fp4 STATIC src/prefill/fp4/moe_fp4.cu)
-set_target_properties(fp4 PROPERTIES CUDA_ARCHITECTURES 120a-real)
-target_include_directories(fp4 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(fp4 PUBLIC mmq ${_gpu_runtime_target})
-target_link_libraries(prefill PUBLIC fp4)
 if(BUILD_TESTING)
   # the fused int8 experts against a double-precision reference and the MMQ path (exit 77 without int8 tensor cores)
   add_executable(prefill_fused_moe_test tests/cuda/prefill_fused_moe_test.cpp)
@@ -1366,10 +1351,6 @@ if(BUILD_TESTING)
   target_link_libraries(prefill_hc_up_mix_test PRIVATE prefill kernels ${_gpu_runtime_target})
   basalt_gpu_test(NAME prefill_hc_up_mix_test COMMAND prefill_hc_up_mix_test --no-bench)
   set_tests_properties(prefill_hc_up_mix_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
-  add_executable(prefill_fp4_test tests/cuda/prefill_fp4_test.cpp)
-  target_link_libraries(prefill_fp4_test PRIVATE fp4 mmq ${_gpu_runtime_target})
-  basalt_gpu_test(NAME prefill_fp4_test COMMAND prefill_fp4_test --no-bench)
-  set_tests_properties(prefill_fp4_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
 endif()
 add_executable(native_expert_parity tests/kernels/native_expert_parity.cpp)
 target_include_directories(native_expert_parity PRIVATE ${_gpu_include_directories})
@@ -1441,6 +1422,7 @@ if(BUILD_TESTING)
   basalt_cpu_test(NAME expert_multi_test COMMAND expert_multi_test)
   # needs the AVX-512 VNNI and VBMI instruction sets, which not every host has
   set_property(TEST expert_multi_test APPEND PROPERTY LABELS avx512)
+  set_tests_properties(expert_multi_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_executable(nvfp4_cpu_rows_test tests/kernels/cpu/nvfp4_cpu_rows_test.cpp)
   target_link_libraries(nvfp4_cpu_rows_test PRIVATE kernels_cpu)

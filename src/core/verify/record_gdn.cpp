@@ -86,7 +86,6 @@ bool Verifier::WindowRecorder::gdn(int64_t l, const LayerView& v, bool read_q8, 
         ra.dt = (const float*) wdt->data; ra.ssm_a = (const float*) wsa->data; ra.z = v_.z_;
         ra.gamma = (const float*) wnm->data; ra.h = hb; ra.gate = gate; ra.beta = beta; ra.yq = v_.xq_;
         ra.C = (int) C; ra.n_embd = (int) N; ra.h_k = (int) HK; ra.h_v = (int) HV; ra.eps = EPS;
-        ra.early_trigger = pdl;   // PDL2: the out projection stages its weights
         {
             PdlScope pr(pdl);
             rec(ra);
@@ -132,7 +131,6 @@ bool Verifier::WindowRecorder::gdn(int64_t l, const LayerView& v, bool read_q8, 
         ra.dt = (const float*) wdt->data; ra.ssm_a = (const float*) wsa->data; ra.z = v_.z_;
         ra.gamma = (const float*) wnm->data; ra.h = hb; ra.gate = gate; ra.beta = beta; ra.yq = v_.xq_;
         ra.C = (int) C; ra.n_embd = (int) N; ra.h_k = (int) HK; ra.h_v = (int) HV; ra.eps = EPS;
-        ra.early_trigger = pdl;   // PDL2: the out projection stages its weights
         if (gdnf_fork) {
             if (gdnf == 2) gdnf_z_side();
             ra.o = v_.y_;

@@ -267,15 +267,10 @@ void dec_moe_combine(const float* parts, const float* peer_rows_m, const float* 
         (cpu_done != nullptr && (dep || tag_done == nullptr || cpu_seen == nullptr)))
         throw std::invalid_argument("dec_moe_combine requires a stream, width, 1..15 experts, tokens");
     if (dm_combine4_on() && peer_done_m == nullptr && n_embd % 4 == 0 && k <= 10) {
-        cudaLaunchAttribute at[1];
-        at[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
-        at[0].val.programmaticStreamSerializationAllowed = 1;
         cudaLaunchConfig_t cfg{};
         cfg.gridDim = dim3(unsigned((n_embd / 4 + 127) / 128), (unsigned) n_tok);
         cfg.blockDim = dim3(128);
         cfg.stream = static_cast<cudaStream_t>(stream);
-        cfg.attrs = at;
-        cfg.numAttrs = dep ? 1 : 0;
         const int ki = int(k);
         const volatile uint32_t* none = nullptr;
         unsigned* nseen = nullptr;

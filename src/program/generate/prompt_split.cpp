@@ -1,4 +1,5 @@
 #include "context.hpp"
+#include "basalt/ggml/ggml.h"
 
 namespace basalt::program::generate {
 
@@ -29,10 +30,16 @@ int prompt_split(Context& context) {
     std::vector<std::unique_ptr<PromptStage>> pstages;
     double split_host_gbps = 0;   // the host's bandwidth to the main card and every tier card at once
     if (split_want) {
+        const auto& layout = basalt::kernels::cpu::expert_layout();
+        bool priced_formats = false;
+        if (layout.native)
+            for (const auto& f : layout.fmt)
+                if (f.gu_type == GGML_TYPE_NVFP4 && f.d_type == GGML_TYPE_NVFP4 && f.tail != 0)
+                    priced_formats = true;
         const char* off = o.peer_exclusive ? "the tier's experts have no RAM copy (--peer-exclusive)"
                         : !src.complement_ready() ? "no RAM copy of the experts"
                         : !o.cvec_files.empty() ? "a control vector"
-                        : !basalt::prefill::Prefill::fp4_experts() ? "priced for NVFP4 experts only" : nullptr;
+                        : !priced_formats ? "priced for NVFP4 experts only" : nullptr;
         if (off == nullptr && main_link_gbps <= 0) main_link_gbps = probe_pcie_h2d_gbps();   // (a set --pcie-frac skips it)
         if (off == nullptr) {
             std::vector<double> bw;

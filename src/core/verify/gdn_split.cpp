@@ -263,7 +263,6 @@ void Verifier::gs_init() {
                 r.conv_w = L.conv_w; r.x = px; r.w_alpha = L.wa; r.w_beta = L.wb; r.dt = L.dt; r.ssm_a = L.ssm_a;
                 r.z = pz; r.gamma = L.gamma; r.o = po; r.yq = pyq;
                 r.C = (int) C1; r.n_embd = (int) N; r.h_k = HK - nk0; r.h_v = (int) V1; r.eps = EPS;
-                r.early_trigger = false;
                 ++i;
             }
         }

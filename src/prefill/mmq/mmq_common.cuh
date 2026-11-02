@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 // What the MMQ kernels need from ggml-cuda's common.cuh (llama.cpp commit 3cf03257f219afbe7334045ff7c6a06ac68c627d,
 // https://github.com/ggml-org/llama.cpp): the error and shared-memory helpers, fast integer division, vector copy,
-// the dp4a wrapper, programmatic dependent launch and the device and pool state.  Copyright (c) 2023-2026 The ggml
+// the dp4a wrapper and the device and pool state.  Copyright (c) 2023-2026 The ggml
 // authors.  MIT licence: see THIRD_PARTY_LICENSES.
 #pragma once
 
@@ -25,8 +25,8 @@
 #define GGML_COMMON_IMPL_CUDA
 #include "basalt/ggml/ggml_common.h"
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 1200
-#error "the MMQ kernels are built for compute capability 12.0 only"
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890
+#error "the MMQ kernels are built for compute capability 8.9 only"
 #endif
 
 #define WARP_SIZE 32
@@ -73,18 +73,6 @@ static constexpr __device__ int ggml_cuda_get_max_cpy_bytes() {
 static __device__ __forceinline__ int ggml_cuda_dp4a(const int a, const int b, int c) {
     return __dp4a(a, b, c);
 }
-
-// Programmatic dependent launch: a kernel waits for its predecessor, or signals that the next may start.
-static __device__ __forceinline__ void ggml_cuda_pdl_sync() {
-    cudaGridDependencySynchronize();
-}
-
-static __device__ __forceinline__ void ggml_cuda_pdl_lc() {
-    cudaTriggerProgrammaticLaunchCompletion();
-}
-
-// Kernels that use programmatic dependent launch take no __restrict__ pointers.
-#define GGML_CUDA_RESTRICT
 
 // See https://gmplib.org/~tege/divcnst-pldi94.pdf figure 4.1.
 // Precompute mp (m' in the paper) and L such that division

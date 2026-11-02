@@ -14,7 +14,7 @@
 // it sits.
 //
 // Weights are the GGUF row-major blocks; x_q8_1 holds ncols (1..8) columns of n_in / 32 q8_1 blocks.  n_in must be a
-// multiple of 512, x_q8_1 16-byte aligned.  Needs thread-block clusters.
+// multiple of 512, x_q8_1 16-byte aligned.
 #pragma once
 
 #include <cstddef>
@@ -40,8 +40,8 @@ void dense_tc_pair(int type0, const void* w0, float* y0, int n_out0, int type1, 
 /// start, so the pair's blocks stage their first tiles on the SMs the read leaves.
 int dense_tc_pair_mask();
 
-/// The 16-byte aligned `bytes` at w into L2 (bulk prefetches), as a kernel on the stream that lets the next kernel in
-/// at once and ends after the kernel before it.
+/// The 16-byte aligned `bytes` at w into L2 (128-byte line prefetches), as a kernel on the stream that lets the next
+/// kernel in at once and ends after the kernel before it.
 void dense_tc_l2_prefetch(const void* w, std::size_t bytes, void* stream);
 
 /// Which verify projections take dense_tc for every window width (bits): 1 GDN qkv, 2 GDN z, 4 GDN out, 8 QSA q,

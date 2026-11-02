@@ -24,6 +24,7 @@
 #include "basalt/kernels/verify_kernels.hpp"
 
 #include <cuda_runtime.h>
+#include "basalt/cuda_target.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -32,6 +33,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -212,7 +214,6 @@ void run_gdnf(const Layer& L, const float* x, Bufs& b, int T, cudaStream_t s, in
     a.state = L.state; a.qkv = b.qkv; a.conv_w = L.conv_w; a.x = x; a.w_alpha = L.wa; a.w_beta = L.wb;
     a.dt = L.dt; a.ssm_a = L.ssm_a; a.z = b.z; a.gamma = L.gamma; a.h = b.h; a.gate = b.gate; a.beta = b.beta;
     a.y = nullptr; a.yq = b.yq; a.C = C; a.n_embd = N; a.h_k = HK; a.h_v = HV; a.eps = EPS;
-    a.early_trigger = true;
     a.o = b.y;
     if (stages & 1) {
         native_quantize_q8_1(x, b.xq, N, T, s);
@@ -402,7 +403,10 @@ std::vector<float> cpu_commit(const std::vector<float>& st0, const float* h, con
 
 double max_err(const float* a, const float* b, size_t n) {
     double m = 0;
-    for (size_t i = 0; i < n; ++i) m = std::max(m, std::fabs((double) a[i] - b[i]) / (1.0 + std::fabs((double) b[i])));
+    for (size_t i = 0; i < n; ++i) {
+        if (!std::isfinite(a[i]) || !std::isfinite(b[i])) return std::numeric_limits<double>::infinity();
+        m = std::max(m, std::fabs((double) a[i] - b[i]) / (1.0 + std::fabs((double) b[i])));
+    }
     return m;
 }
 
@@ -717,7 +721,7 @@ void bench_seg(cudaStream_t s) {
                 DecRecArgs a;
                 a.qkv = d_qkv; a.conv_w = L.conv_w; a.x = d_x; a.w_alpha = L.wa; a.w_beta = L.wb; a.dt = L.dt;
                 a.ssm_a = L.ssm_a; a.z = d_z; a.gamma = L.gamma; a.h = h; a.gate = g; a.beta = b; a.yq = yq; a.C = C;
-                a.n_embd = N; a.h_k = HK; a.h_v = HV; a.eps = EPS; a.early_trigger = false;
+                a.n_embd = N; a.h_k = HK; a.h_v = HV; a.eps = EPS;
                 if (path == 3) { dec_gdn_rec_seg(a, d_rows, (size_t) l * SF, R, 1, s); return; }
                 for (int k = 0; k < R; ++k) {
                     DecRecArgs r = a;
@@ -761,7 +765,7 @@ int main(int argc, char** argv) {
     int dev = 0;
     cudaDeviceProp p{};
     CK(cudaGetDeviceProperties(&p, dev));
-    if (p.major < 9) { std::printf("dec_gdn_parity: needs thread-block clusters (compute capability %d.%d)\n", p.major, p.minor); return 77; }
+    if (!basalt::cuda_target::supports(p.major, p.minor)) { std::printf("dec_gdn_parity: needs compute capability 8.9 (got %d.%d)\n", p.major, p.minor); return 77; }
     std::printf("%s: %d SMs, L2 %d MB, smem/block opt-in %zu KB\n", p.name, p.multiProcessorCount, p.l2CacheSize >> 20,
                 p.sharedMemPerBlockOptin >> 10);
     cudaStream_t s;

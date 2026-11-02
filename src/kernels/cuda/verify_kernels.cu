@@ -572,8 +572,10 @@ __global__ void __launch_bounds__(32 * RG) gdn_commit_lazy_kernel(GdnCommitLayer
             const uint64_t take = min(min(o1 - o, pf.n[r] - ro), (uint64_t) 32768);
             const char* src = (const char*) pf.p[r] + ro;
             if (take >= 16) {
-                asm volatile("cp.async.bulk.prefetch.L2.global [%0], %1;" ::"l"(src), "r"((unsigned) (take & ~15ull)) : "memory");
-                last = src + (take & ~15ull) - 16;
+                const uint64_t aligned = take & ~15ull;
+                for (uint64_t offset = 0; offset < aligned; offset += 128)
+                    asm volatile("prefetch.global.L2 [%0];" ::"l"(src + offset) : "memory");
+                last = src + aligned - 16;
             }
             o += take;
         }

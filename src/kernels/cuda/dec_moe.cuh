@@ -233,7 +233,6 @@ __global__ void __launch_bounds__(kDmThreads) dm_route_kernel(DmRouteArgs a) {
     __shared__ int32_t s_ids[kDmCap], s_kind[kDmCap], s_first[kDmCap], s_cnt[kDmCap], s_gstart[kDmCap];
     __shared__ int32_t s_gidx[kDmCap], s_pos[kDmCap];
     __shared__ int32_t s_ncpu, s_npeer, s_ng, s_ne, s_nx[kDmMaxX];
-    if (a.sh_gw != nullptr) pdl_trigger();   // the next kernel may start (only weights before its wait)
     const int tid = threadIdx.x, n = a.n_tok * a.k;
     pdl_wait();   // DEC_PDL2: launched during the router's tail
     if (tid == 0) { s_ncpu = 0; s_npeer = 0; }
@@ -458,7 +457,6 @@ __device__ void dm_poll_tiers(const DmPlan* plan, const volatile uint32_t* peer_
 
 __global__ void dm_wait_kernel(const DmPlan* plan, const volatile uint32_t* peer_done, const volatile uint32_t* host_flag,
                                uint32_t ring, unsigned long long* stats, int layer, int trigger) {
-    if ((trigger & 1) != 0) pdl_trigger();
     if (stats != nullptr) {
         stats[1] = dm_clock();
         dm_poll_tiers(plan, peer_done, host_flag, ring, stats);
@@ -657,7 +655,6 @@ __global__ void __launch_bounds__(256, 2) dm_glue_gu_kernel(DmGlueArgs a, Native
     __shared__ alignas(16) uint32_t s_grid_buf[gu2::Fmt2<TG>::kGridWords];
     const int tid = threadIdx.x, n = a.n_tok * a.k;
     const bool lead = blockIdx.x == 0;
-    if (!lead) pdl_trigger();   // the lead block lets the SwiGLU and down launches start once the plan is out
     const int nwork = (int) gridDim.x - (a.ring_on ? 1 : 0);
     if (a.ring_on && (int) blockIdx.x == nwork) {   // the ring's block
         if (a.ring.pub_ctr != nullptr) {
@@ -744,7 +741,6 @@ __global__ void __launch_bounds__(256, 2) dm_glue_gu_kernel(DmGlueArgs a, Native
         }
         __threadfence();
         __syncthreads();
-        pdl_trigger();
     }
     const int nx = (int) (2 * L.n_ff + GU2_ROWS - 1) / GU2_ROWS;
     const int items = nx * ng;   // one (row block, group) item each: every group's rows spread over all blocks
@@ -854,7 +850,6 @@ __global__ void __launch_bounds__(256, 4) dm_glue_gu1_kernel(DmGlueArgs a, Nativ
     __shared__ int s_dup;
     const int tid = threadIdx.x, n = a.n_tok * a.k;
     const bool lead = blockIdx.x == 0;
-    if (!lead) pdl_trigger();
     const int nwork = (int) gridDim.x - (a.ring_on ? 1 : 0);
     // after a read that counts its progress the blocks start on its counts, not its end, and the last block of the
     // launch to finish (the ring's block among them) zeroes the counts
@@ -967,7 +962,6 @@ __global__ void __launch_bounds__(256, 4) dm_glue_gu1_kernel(DmGlueArgs a, Nativ
         }
         __threadfence();
         __syncthreads();
-        pdl_trigger();
     }
     const int nx = (int) (2 * L.n_ff + GU_ROWS - 1) / GU_ROWS;
     const int items = nx * ng;   // one (row block, group) item each
@@ -1833,45 +1827,34 @@ __global__ void __launch_bounds__(kDmThreads) dm_vram_kernel(const DmPlan* __res
     if (dm_arrive(sync, gridDim.x, sync + 1, ng)) sync[0] = 0u;
 }
 
-// ---------------------------------------------------------------- the VRAM share through the copy engine (TMA)
-// Each block walks its work items (b, b + nb, ...: gate/up items of 8 rows, then down items of 32 rows) with every
-// item's weight rows brought into shared memory by a bulk copy issued kTmaStages - 1 items ahead, so a block keeps
-// several items in flight whatever its warps are doing; the rows are then read from shared memory by the same row
-// dots (the same bits).  A down item waits for its group's gate/up items (counters, as dm_experts).
-constexpr int kTmaStages = 3;
-constexpr int kTmaStage = 11776;          // bytes: the largest item (32 IQ4_NL down rows, 8 IQ4_XS gate/up rows)
-constexpr int kTmaGuRows = 8, kTmaDownRows = 32;
+// ---------------------------------------------------------------- the VRAM share through shared-memory staging
+// Each block walks gate/up items, then down items. Cooperative copies stage the weight rows;
+// the row dots and their accumulation order are unchanged.
+constexpr int kStageStages = 3;
+constexpr int kStageStage = 11776;          // bytes: the largest item (32 IQ4_NL down rows, 8 IQ4_XS gate/up rows)
+constexpr int kStageGuRows = 8, kStageDownRows = 32;
 
-struct DmTmaShared {
-    alignas(128) uint8_t stage[kTmaStages][kTmaStage];
-    alignas(8) unsigned long long bar[kTmaStages];
+struct DmStageShared {
+    alignas(128) uint8_t stage[kStageStages][kStageStage];
     alignas(16) block_q8_1 hq[kDmMaxEnt * 20];
-    alignas(16) float out[kDmMaxEnt * kTmaDownRows];
+    alignas(16) float out[kDmMaxEnt * kStageDownRows];
     int32_t start[kDmCap + 1], tok[kDmCap], dst[kDmCap];
     unsigned long long gptr[kDmCap];
 };
 
 __device__ __forceinline__ uint32_t dm_smem(const void* p) { return (uint32_t) __cvta_generic_to_shared(p); }
-__device__ __forceinline__ void dm_bulk(void* dst, const void* src, uint32_t bytes, unsigned long long* bar) {
-    asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%0], %1;" :: "r"(dm_smem(bar)), "r"(bytes) : "memory");
-    asm volatile("cp.async.bulk.shared::cta.global.mbarrier::complete_tx::bytes [%0], [%1], %2, [%3];"
-                 :: "r"(dm_smem(dst)), "l"(src), "r"(bytes), "r"(dm_smem(bar)) : "memory");
-}
-__device__ __forceinline__ void dm_bar_wait(unsigned long long* bar, uint32_t parity) {
-    uint32_t ok = 0;
-    while (!ok)
-        asm volatile("{ .reg .pred p; mbarrier.try_wait.parity.shared::cta.b64 p, [%1], %2; selp.u32 %0, 1, 0, p; }"
-                     : "=r"(ok) : "r"(dm_smem(bar)), "r"(parity) : "memory");
+__device__ __forceinline__ void dm_stage_copy(void* dst, const void* src, uint32_t bytes) {
+    for (uint32_t offset = threadIdx.x * 16; offset < bytes; offset += kDmThreads * 16)
+        asm volatile("cp.async.cg.shared.global [%0], [%1], 16;"
+                     :: "r"(dm_smem((uint8_t*) dst + offset)), "l"((const uint8_t*) src + offset) : "memory");
 }
 
-// sm's groups (ng, start, gptr, tok, dst set) through the bulk-copy pipeline: block b of nb takes items b, b + nb, ...
-// (gate/up items of 8 rows, then down items of 32 rows); `base` counts the block's earlier items on these barriers
-// (their phases).  Returns the items it took.
+// Block b of nb takes staged items b, b + nb, ...; returns the number of items it took.
 template<int TG, int TD>
-__device__ int dm_experts_tma(DmTmaShared& sm, int ng, const block_q8_1* __restrict__ xq, const NativeExpertLayout& L,
+__device__ int dm_experts_staged(DmStageShared& sm, int ng, const block_q8_1* __restrict__ xq, const NativeExpertLayout& L,
                               float* gate, float* up, float* out, unsigned int* done, int b, int nb, int base) {
     const int tid = threadIdx.x, warp = tid >> 5, lane = tid & 31;
-    const int nga = (int) (2 * L.n_ff / kTmaGuRows), ndn = (int) (L.n_embd / kTmaDownRows);
+    const int nga = (int) (2 * L.n_ff / kStageGuRows), ndn = (int) (L.n_embd / kStageDownRows);
     const int na = ng * nga, total = na + ng * ndn;
     auto issue = [&](int k) {
         const int it = b + k * nb;
@@ -1880,35 +1863,32 @@ __device__ int dm_experts_tma(DmTmaShared& sm, int ng, const block_q8_1* __restr
         uint32_t bytes;
         if (it < na) {
             const int g = it / nga, c = it - g * nga;
-            bytes = (uint32_t) (kTmaGuRows * L.gu_row);
+            bytes = (uint32_t) (kStageGuRows * L.gu_row);
             src = (const uint8_t*) sm.gptr[g] + (size_t) c * bytes;
         } else {
             const int j = it - na, g = j / ndn, c = j - g * ndn;
-            bytes = (uint32_t) (kTmaDownRows * L.d_row);
+            bytes = (uint32_t) (kStageDownRows * L.d_row);
             src = (const uint8_t*) sm.gptr[g] + L.down_off + (size_t) c * bytes;
         }
-        const int st = (base + k) % kTmaStages;
-        dm_bulk(sm.stage[st], src, bytes, &sm.bar[st]);
+        const int st = (base + k) % kStageStages;
+        dm_stage_copy(sm.stage[st], src, bytes);
     };
     __syncthreads();                             // the stages' earlier contents are consumed
-    if (tid == 0)
-        for (int k = 0; k < kTmaStages - 1; ++k) issue(k);
+    for (int k = 0; k < kStageStages - 1; ++k) issue(k);
+    asm volatile("cp.async.commit_group;" ::: "memory");
     int g_staged = -1, k = 0;
     for (; b + k * nb < total; ++k) {
         const int it = b + k * nb;
         if (k > 0) __syncthreads();              // stage (k - 1) is consumed: refill it
-        if (tid == 0) {
-            // the warps read the stage with generic loads; the refill is an async-proxy write
-            asm volatile("fence.proxy.async.shared::cta;" ::: "memory");
-            issue(k + kTmaStages - 1);
-        }
-        const int st = (base + k) % kTmaStages;
-        const uint32_t parity = (uint32_t) (((base + k) / kTmaStages) & 1);
+        issue(k + kStageStages - 1);
+        asm volatile("cp.async.commit_group;" ::: "memory");
+        asm volatile("cp.async.wait_all;" ::: "memory");
+        __syncthreads();
+        const int st = (base + k) % kStageStages;
         const uint8_t* rows = sm.stage[st];
         if (it < na) {
             const int g = it / nga, c = it - g * nga;
-            dm_bar_wait(&sm.bar[st], parity);
-            dm_gu_row<TG, false>(rows + (size_t) warp * L.gu_row, c * kTmaGuRows + warp, sm.start[g], sm.start[g + 1],
+            dm_gu_row<TG, false>(rows + (size_t) warp * L.gu_row, c * kStageGuRows + warp, sm.start[g], sm.start[g + 1],
                                  sm.tok, xq, L, gate, up, nullptr, lane, sm.gptr[g]);
             __threadfence();
             __syncthreads();
@@ -1926,38 +1906,29 @@ __device__ int dm_experts_tma(DmTmaShared& sm, int ng, const block_q8_1* __restr
                 g_staged = g;
                 __syncthreads();
             }
-            dm_bar_wait(&sm.bar[st], parity);
             constexpr int R = dm_down_rows<TD>();
 #pragma unroll
-            for (int sb = 0; sb < kTmaDownRows / R; ++sb)
-                dm_down_item<TD>(rows + (size_t) (sb * R) * L.d_row, e0, e1, sm.hq, L, c * (kTmaDownRows / R) + sb,
-                                 sm.out + sb * R, tid, kTmaDownRows, sm.gptr[g]);
+            for (int sb = 0; sb < kStageDownRows / R; ++sb)
+                dm_down_item<TD>(rows + (size_t) (sb * R) * L.d_row, e0, e1, sm.hq, L, c * (kStageDownRows / R) + sb,
+                                 sm.out + sb * R, tid, kStageDownRows, sm.gptr[g]);
             __syncthreads();
-            constexpr int q = kTmaDownRows / 4;
+            constexpr int q = kStageDownRows / 4;
             const int nq = (e1 - e0) * q;
             for (int i = tid; i < nq; i += kDmThreads) {
                 const int e = i / q, cc = i - e * q;
-                *(float4*) (out + (size_t) sm.dst[e0 + e] * L.n_embd + c * kTmaDownRows + cc * 4) =
-                    *(const float4*) &sm.out[e * kTmaDownRows + cc * 4];
+                *(float4*) (out + (size_t) sm.dst[e0 + e] * L.n_embd + c * kStageDownRows + cc * 4) =
+                    *(const float4*) &sm.out[e * kStageDownRows + cc * 4];
             }
         }
     }
     return k;
 }
 
-__device__ __forceinline__ void dm_bars_init(DmTmaShared& sm) {
-    if (threadIdx.x == 0) {
-        for (int i = 0; i < kTmaStages; ++i)
-            asm volatile("mbarrier.init.shared::cta.b64 [%0], 1;" :: "r"(dm_smem(&sm.bar[i])) : "memory");
-        asm volatile("fence.mbarrier_init.release.cluster;" ::: "memory");
-    }
-}
-
 template<int TG, int TD>
-__global__ void __launch_bounds__(kDmThreads) dm_vram_tma_kernel(const DmPlan* __restrict__ plan,
+__global__ void __launch_bounds__(kDmThreads) dm_vram_staged_kernel(const DmPlan* __restrict__ plan,
                                                                  const block_q8_1* __restrict__ xq, NativeExpertLayout L,
                                                                  float* gate, float* up, float* out, unsigned int* sync) {
-    __shared__ DmTmaShared sm;
+    __shared__ DmStageShared sm;
     const int tid = threadIdx.x;
     const int ng = plan->counts[0];
     for (int i = tid; i <= ng; i += kDmThreads) {
@@ -1968,8 +1939,7 @@ __global__ void __launch_bounds__(kDmThreads) dm_vram_tma_kernel(const DmPlan* _
         sm.tok[i] = plan->tok[i];
         sm.dst[i] = plan->dst[i];
     }
-    dm_bars_init(sm);
-    dm_experts_tma<TG, TD>(sm, ng, xq, L, gate, up, out, sync + 1, blockIdx.x, gridDim.x, 0);
+    dm_experts_staged<TG, TD>(sm, ng, xq, L, gate, up, out, sync + 1, blockIdx.x, gridDim.x, 0);
     if (dm_arrive(sync, gridDim.x, sync + 1, ng)) sync[0] = 0u;
 }
 
@@ -2095,14 +2065,14 @@ __global__ void __launch_bounds__(256) dm_gu_kernel(const DmPlan* __restrict__ p
 }
 
 template<int TG, int TD>
-int dm_vram_tma_blocks() {
+int dm_vram_staged_blocks() {
     static int known[64] = {};
     int dev = 0;
     if (cudaGetDevice(&dev) != cudaSuccess || dev < 0 || dev >= 64) { cudaGetLastError(); return 0; }
     if (known[dev] == 0) {
         int sms = 0, per = 0;
         if (cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev) != cudaSuccess ||
-            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per, dm_vram_tma_kernel<TG, TD>, kDmThreads, 0) != cudaSuccess) {
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per, dm_vram_staged_kernel<TG, TD>, kDmThreads, 0) != cudaSuccess) {
             cudaGetLastError();
             per = 0;
         }
@@ -2208,7 +2178,7 @@ void dec_moe_glue(const NativeExpertLayout& L, const DmGlueArgs& a_in, void* scr
     const int items = (int) ((2 * L.n_ff + ir - 1) / ir) * cap;
     auto go = [&](auto kernel, int resident) {
         const int nb = std::max(1, std::min(items, resident)) + (a.ring_on ? 1 : 0);
-        launch_dependent(kernel, dim3((unsigned) nb), s, a, L, gate, up, hq);
+        launch_pdl(kernel, dim3((unsigned) nb), dim3(256), 0, s, a, L, gate, up, hq);
     };
     switch (L.gu_type) {
         case 40: go(dm_glue_gu1_kernel<40>, dm_glue1_blocks<40>()); break;
@@ -2223,8 +2193,7 @@ void dec_moe_glue(const NativeExpertLayout& L, const DmGlueArgs& a_in, void* scr
     check("dec_moe_glue/gu");
     const DmPlan* P = a.plan;
     const long long nh = (long long) cap * L.n_ff;
-    launch_dependent(swiglu_q8_1_entries_pdl_kernel, dim3((unsigned) ((nh + 255) / 256)), s, (const float*) gate,
-                     (const float*) up, (const int32_t*) P->start, (const int32_t*) P->counts, (int) L.n_ff, hq);
+    swiglu_q8_1_entries_kernel<<<(unsigned) ((nh + 255) / 256), 256, 0, s>>>(gate, up, P->start, P->counts, (int) L.n_ff, hq);
     check("dec_moe_glue/swiglu");
     const int d_rows = kDown40Type(L.d_type) ? 32 : (L.d_type == 42 ? 16 : 8);
     const dim3 gd((unsigned) ((L.n_embd + d_rows - 1) / d_rows), (unsigned) gy);
@@ -2407,24 +2376,29 @@ static const void* dm_peer_fn(bool q2, bool mix = false) {
     return q2 ? (const void*) dm_peer_kernel<true, false> : (const void*) dm_peer_kernel<false, false>;
 }
 
-int dec_moe_peer_blocks(bool q2) {
+int dec_moe_peer_blocks(bool q2, bool mix) {
     int dev = 0, sms = 0, coop = 0, per = 0;
     if (cudaGetDevice(&dev) != cudaSuccess || cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev) != cudaSuccess ||
         cudaDeviceGetAttribute(&coop, cudaDevAttrCooperativeLaunch, dev) != cudaSuccess ||
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per, dm_peer_fn(q2), kDmThreads, 0) != cudaSuccess) {
+        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per, dm_peer_fn(q2, mix), kDmThreads, 0) != cudaSuccess) {
         cudaGetLastError();
         return 0;
     }
     if (!coop || per <= 0) return 0;
+    // The mixer build's recurrence tile fills most of an SM's shared memory, which admits one block a card wide; the
+    // occupancy query over-reports it, and a grid above what is resident deadlocks every grid barrier.
+    if (mix) per = 1;
     return sms * per;
 }
 
 bool dec_moe_peer_launch(const DmPeerArgs& a, int blocks, void* stream, bool q2) {
     DmPeerArgs args = a;
     args.gu2 = 1;
+    const bool mix = a.mixl != nullptr;
+    const int maxb = dec_moe_peer_blocks(q2, mix);   // the launched build's co-resident maximum
+    if (maxb > 0 && blocks > maxb) blocks = maxb;
     void* params[] = {&args};
-    const cudaError_t e = cudaLaunchCooperativeKernel(dm_peer_fn(q2, a.mixl != nullptr),
-                                                      dim3((unsigned) blocks),
+    const cudaError_t e = cudaLaunchCooperativeKernel(dm_peer_fn(q2, mix), dim3((unsigned) blocks),
                                                       dim3(kDmThreads), params, 0, (cudaStream_t) stream);
     if (e != cudaSuccess) {
         basalt::log::error("basalt", "dec_moe_peer_launch: %s", cudaGetErrorString(e));
@@ -2541,16 +2515,16 @@ void dec_moe_vram(const NativeExpertLayout& L, const DmPlan* plan, const void* x
         return;
     }
     if (kind == 1) {
-        if (L.gu_row * kTmaGuRows > (size_t) kTmaStage || L.d_row * kTmaDownRows > (size_t) kTmaStage ||
-            (L.gu_row * kTmaGuRows) % 16 != 0 || (L.d_row * kTmaDownRows) % 16 != 0 || L.down_off % 16 != 0 ||
-            L.n_embd % kTmaDownRows != 0) {
-            basalt::log::error("basalt", "dec_moe_vram: the TMA kernel does not take formats %d / %d", L.gu_type, L.d_type);
+        if (L.gu_row * kStageGuRows > (size_t) kStageStage || L.d_row * kStageDownRows > (size_t) kStageStage ||
+            (L.gu_row * kStageGuRows) % 16 != 0 || (L.d_row * kStageDownRows) % 16 != 0 || L.down_off % 16 != 0 ||
+            L.n_embd % kStageDownRows != 0) {
+            basalt::log::error("basalt", "dec_moe_vram: the staged kernel does not take formats %d / %d", L.gu_type, L.d_type);
             std::exit(1);
         }
         switch (L.gu_type * 100 + L.d_type) {
 #define DM_T(TG, TD) case TG * 100 + TD: \
-            blocks = dm_vram_tma_blocks<TG, TD>(); \
-            if (blocks > 0) dm_vram_launch(dm_vram_tma_kernel<TG, TD>, blocks, stream, plan, (const block_q8_1*) xq, L, \
+            blocks = dm_vram_staged_blocks<TG, TD>(); \
+            if (blocks > 0) dm_vram_launch(dm_vram_staged_kernel<TG, TD>, blocks, stream, plan, (const block_q8_1*) xq, L, \
                                            gate, up, out, sync); \
             break;
             DM_PAIRS(DM_T)

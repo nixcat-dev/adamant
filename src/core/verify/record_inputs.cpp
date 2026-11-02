@@ -30,20 +30,18 @@ bool Verifier::WindowRecorder::ple_fork() {
         err = std::string("verify PLE side: ") + e.what();
         return false;
     }
-    ple_open = true;
     return true;
 }
 
 bool Verifier::WindowRecorder::inputs() {
     using namespace basalt::kernels;
     if (v_.prof_on_ && !v_.batch_rec_) gpu_stamp(v_.prof_, (int) (g.n_layers * kProfPer + 2), cs);
-    // layer 1's PLE projections read only the host-gated rows: they run on a side branch, forked once no mid chain is
-    // left before layer 1's join (ple_fork), so its spin kernel never holds an SM the mid chain needs
+    // layer 1's PLE projections read only the host-gated rows: they run on a side branch, forked at the window's start
+    // when it begins at layer 1 and else after layer 0's middle (ple_fork), so its spin kernel holds no SM
     ple_side = ple_on && !v_.batch_rec_ && dm && v_.lb_ <= 1 && v_.le_ > 1 && !v_.prof_on_ &&
                           v_.ple_s_ != nullptr && v_.ev_ple_fork_ != nullptr && v_.ev_ple_join_ != nullptr &&
                           ss.ple.w.key_bf16 != nullptr && ss.ple.w.value_bf16 != nullptr;
     if (!v_.batch_rec_) v_.ple_side_ = ple_side;
-    ple_open = false;
     if (ple_side && v_.lb_ == 1 && !ple_fork()) return false;
     // ---- the async commit's remainder (a no-op when none is pending): nothing later in the window reads or writes
     // what it works on until this node returns - the GDN state, conv history, indexer buffers and PLE history, nor the

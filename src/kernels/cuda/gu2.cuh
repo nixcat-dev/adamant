@@ -343,7 +343,6 @@ __global__ void __launch_bounds__(256) native_gu2_kernel(const unsigned long lon
                                                          const int32_t* __restrict__ ent_tok,
                                                          const block_q8_1* __restrict__ xq, NativeExpertLayout L,
                                                          float* __restrict__ gate, float* __restrict__ up) {
-    asm volatile("griddepcontrol.launch_dependents;");   // the down kernel may start (it waits for this grid)
     const int ng = *n_groups;
     if ((int) blockIdx.y >= ng) return;
     __shared__ alignas(16) uint32_t s_grid_buf[gu2::Fmt2<TG>::kGridWords];
@@ -359,47 +358,4 @@ __global__ void __launch_bounds__(256) native_gu2_kernel(const unsigned long lon
 // whether native_gu2_kernel takes L's gate/up rows: 2560 values a row (80 calls), an even n_ff, 4-byte aligned rows
 __host__ __device__ inline bool gu2_usable(const NativeExpertLayout& L) {
     return L.n_embd == 2560 && L.n_ff % 2 == 0 && L.gu_row % 4 == 0 && L.up_off % 4 == 0;
-}
-
-// ---------------------------------------------------------------- DEC_GU2=2: a programmatic chain
-// The SwiGLU pass and the down kernel launched as programmatic dependents (gate/up -> SwiGLU -> down), each grid
-// letting the next one launch as soon as all its blocks have started: a down block prefetches its weight rows into
-// L2 before it waits for the SwiGLU pass, so the down weights stream while the gate/up rows are still being read.
-// Before its wait a kernel reads only the plan (written before the gate/up kernel) and the weights.
-__device__ __forceinline__ void pdl_trigger() { asm volatile("griddepcontrol.launch_dependents;"); }
-
-__device__ __forceinline__ void prefetch_l2(const uint8_t* p, int bytes, int tid) {
-    for (int o = tid * 128; o < bytes; o += 256 * 128) asm volatile("prefetch.global.L2 [%0];" ::"l"(p + o));
-}
-
-// swiglu_q8_1_entries_kernel's body after the wait
-__global__ void __launch_bounds__(256) swiglu_q8_1_entries_pdl_kernel(const float* __restrict__ gate,
-                                                                      const float* __restrict__ up,
-                                                                      const int32_t* __restrict__ grp_start,
-                                                                      const int32_t* __restrict__ n_groups, int n_ff,
-                                                                      block_q8_1* __restrict__ hq) {
-    pdl_trigger();
-    const long long lo = (long long) grp_start[0] * n_ff, hi = (long long) grp_start[*n_groups] * n_ff;
-    pdl_wait();
-    for (long long i = lo + (long long) blockIdx.x * blockDim.x + threadIdx.x; i < hi;
-         i += (long long) gridDim.x * blockDim.x) {
-        const float g = gate[i];
-        const float h = __fmul_rn(g / (1.0f + __expf(-g)), up[i]);
-        q8_1_store(h, hq, i);
-    }
-}
-
-template<typename... KArgs, typename... Args>
-void launch_dependent(void (*kernel)(KArgs...), dim3 grid, cudaStream_t s, Args... args) {
-    cudaLaunchAttribute at[1];
-    at[0].id = cudaLaunchAttributeProgrammaticStreamSerialization;
-    at[0].val.programmaticStreamSerializationAllowed = 1;
-    cudaLaunchConfig_t cfg{};
-    cfg.gridDim = grid;
-    cfg.blockDim = dim3(256);
-    cfg.dynamicSmemBytes = 0;
-    cfg.stream = s;
-    cfg.attrs = at;
-    cfg.numAttrs = 1;
-    (void) cudaLaunchKernelEx(&cfg, kernel, args...);   // an error stays for the caller's check
 }

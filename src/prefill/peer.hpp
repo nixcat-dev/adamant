@@ -9,7 +9,6 @@
 #include "basalt/core/native_head.hpp"
 #include "basalt/prefill/gemm.hpp"
 #include "basalt/prefill/moe_mmq.hpp"
-#include "basalt/prefill/moe_fp4.hpp"
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/log.hpp"
 #include <algorithm>
@@ -53,32 +52,7 @@ struct PeerPrefill {
     mmq::Context* run_ctx = nullptr;      // the context its products run in: ctx, or a layer split helper stage's
     std::vector<int32_t> bounds_host;
     std::vector<void*> owned;
-    // WITHOUT DIRECT ACCESS, a streamed chunk of up to T_fp4 tokens: the primary leaves the experts the peer holds out
-    // of its stream, and the peer computes their rows with the primary's FP4 kernels (the same bits) from its own copy
-    // of the activations, in pieces of at most G rows (fp4::cut_pieces).  The activations and the result rows cross
-    // through pinned host buffers on streams of their own, so neither card's issuing thread waits for a staged copy.
     int prim = -1;                        // the primary's device
-    int64_t T_fp4 = 0;
-    void* f_a4x = nullptr;                // the layer's token planes and token scales (fp4::quantize_tokens)
-    float* f_gsx = nullptr;
-    void* f_a4h = nullptr;                // a run's H planes, token scales, tile table and relative bounds
-    float* f_gsh = nullptr;
-    int32_t* f_toh = nullptr;
-    int32_t* f_rel = nullptr;             // every group's piece bounds of a layer, relative to the group's first row
-    size_t f_rel_cap = 0;
-    std::vector<int32_t> f_rel_host;
-    std::vector<size_t> f_rel_at;
-    fp4::Pieces pieces;
-    float* hx = nullptr;                  // pinned: the layer's activations on their way to the peer
-    static constexpr int kRes = 4;
-    float* hres[kRes] = {};               // pinned: a group's result rows on their way back
-    cudaStream_t x_out = nullptr, res_in = nullptr;   // on the primary: the activations' download, the rows' upload
-    cudaEvent_t ev_hx = nullptr;          // primary: hx holds the layer's activations
-    cudaEvent_t ev_hx_free = nullptr;     // peer: its upload from hx is done
-    cudaEvent_t ev_d2h[kRes] = {};        // peer: hres[b] holds a group's rows
-    cudaEvent_t ev_h2d[kRes] = {};        // primary: hres[b]'s rows are in Dm
-    cudaEvent_t ev_res = nullptr;         // primary: the layer's peer rows are in Dm
-    bool hx_live = false, res_live[kRes] = {};
     ~PeerPrefill() {
         if (dev < 0) return;
         int prev = 0;
@@ -91,18 +65,10 @@ struct PeerPrefill {
         if (s_out) cudaStreamSynchronize(s_out);
         for (cudaEvent_t e : ev_grp) if (e) cudaEventDestroy(e);
         for (cudaEvent_t e : ev_dm) if (e) cudaEventDestroy(e);
-        if (ev_hx_free) cudaEventDestroy(ev_hx_free);
-        for (cudaEvent_t e : ev_d2h) if (e) cudaEventDestroy(e);
         if (s_out) cudaStreamDestroy(s_out);
         if (s) cudaStreamDestroy(s);
         cudaSetDevice(prim >= 0 ? prim : prev);
-        for (cudaStream_t st : {x_out, res_in})
-            if (st) { cudaStreamSynchronize(st); cudaStreamDestroy(st); }
-        for (cudaEvent_t e : {ev_hx, ev_res}) if (e) cudaEventDestroy(e);
-        for (cudaEvent_t e : ev_h2d) if (e) cudaEventDestroy(e);
         if (ev_in) cudaEventDestroy(ev_in);
-        if (hx) cudaFreeHost(hx);
-        for (float* h : hres) if (h) cudaFreeHost(h);
         cudaSetDevice(prev);
     }
 };

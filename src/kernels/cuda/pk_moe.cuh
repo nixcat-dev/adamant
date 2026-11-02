@@ -195,7 +195,6 @@ __global__ void __launch_bounds__(256, 2) pk_moe_kernel(PkMoeArgs a, NativeExper
         }
     }
     if (tr) { pk_tmax(tr, PK_T_BLOCK_END); pk_tmin(tr, PK_T_BLOCK_END_MIN); }
-    pdl_trigger();   // the next layer's read may start on the SMs this launch leaves (every shared-row wait is past)
     // the last block to arrive zeroes the counters for the next launch
     __syncthreads();
     if (tid == 0) {
@@ -258,7 +257,7 @@ void pk_moe_experts(const NativeExpertLayout& L, const PkMoeArgs& a, void* scrat
 #define PK_GO(TG, TD) \
     case TG * 100 + TD: { \
         const int blocks = std::max(1, std::min(items, pk_moe_blocks<TG, TD>())); \
-        launch_dependent(pk_moe_kernel<TG, TD>, dim3((unsigned) blocks), s, a, L, gate, up); \
+        pk_moe_kernel<TG, TD><<<blocks, 256, 0, s>>>(a, L, gate, up); \
         done = true; \
         break; \
     }

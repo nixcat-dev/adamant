@@ -11,8 +11,8 @@
 //
 // One CTA per SM; the work is a queue of items in dependency order, handed on through counters in global memory
 // instead of kernel boundaries: 88 down items (the matrices' 8-bit rows over half-streams of the stream rows, each
-// forming R' and x itself), one up item per remaining CTA (its slice of w_up copied into shared memory by tensor
-// copies), 81 router items and the top-10 item.  A CTA claims items in order and waits only on earlier items, so the
+// forming R' and x itself), one up item per remaining CTA (its slice of w_up copied into shared memory), 81 router
+// items and the top-10 item.  A CTA claims items in order and waits only on earlier items, so the
 // read finishes even when other work holds some of the SMs.  The matrices are read from their 8-bit copies, so the
 // outputs are not the bf16 kernels' bits; every token's outputs are independent of the window width and its column.
 //
@@ -118,8 +118,6 @@ void hc_fused_init();
 bool hc_fused_supported();
 /// Enqueue the read on `stream` (a PdlScope applies).  Aborts on invalid arguments.
 void hc_fused_read(const HcFusedArgs& a, void* stream);
-/// Prefetch byte ranges into L2 with a one-CTA kernel (bulk prefetches; no data moves to the SMs).
-void hc_l2_prefetch(const void* const* ptrs, const size_t* bytes, int n, void* stream);
 /// The bench only: per-CTA phase times (globaltimer ns) into dbg[nb][16]: start, after the dependency wait, down/up
 /// input ready, down/up done, router input ready, router rows done, top-10 done (last CTA), exit; [15] = 1 for a CTA
 /// that ran a down item, 2 for an up item.  nullptr = off.

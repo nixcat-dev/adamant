@@ -11,7 +11,6 @@
 #include "basalt/kernels/cpu/expert_layout.hpp"
 #include "basalt/kernels/cpu/pool.hpp"
 #include "basalt/kernels/fused_gr.hpp"
-#include "basalt/kernels/mid_chain.hpp"
 #include "basalt/kernels/hc_fused.hpp"
 #include "basalt/kernels/native_mmvq.hpp"
 #include "basalt/kernels/pdl.hpp"
@@ -114,7 +113,6 @@ bool Verifier::init(const WeightTable& wt, const ModelGeometry& g, SessionState&
     basalt::kernels::fused_gr_check();   // once per card: which bitwise-equal hyper-connection read runs there
     basalt::kernels::hc_fused_init();
     basalt::kernels::wait_abort_init();
-    basalt::kernels::mid_chain_init();
     wt_ = &wt;
     g_ = &g;
     ss_ = &ss;

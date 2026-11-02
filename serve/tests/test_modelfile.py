@@ -237,7 +237,7 @@ class Cli(Tmp):
             return None if index == 8 else "GeForce RTX 3070"
         with mock.patch("serve.server.gpu_plan", side_effect=plan), \
                 mock.patch("serve.server.gpu_card_name", side_effect=name):
-            e = self.run_main(*base, "--vision", "9")   # a non-Blackwell card gets through to the Server
+            e = self.run_main(*base, "--vision", "9")   # a non-Ada card gets through to the Server
         self.assertIsInstance(e, RuntimeError)
         with mock.patch("serve.server.gpu_plan", side_effect=plan), \
                 mock.patch("serve.server.gpu_card_name", side_effect=name), \

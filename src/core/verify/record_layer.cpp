@@ -10,7 +10,6 @@
 #include "basalt/kernels/native_router.hpp"
 #include "basalt/kernels/elementwise.hpp"
 #include "basalt/kernels/fused_gr.hpp"
-#include "basalt/kernels/mid_chain.hpp"
 #include "basalt/kernels/hc_fused.hpp"
 #include "basalt/kernels/cvec.hpp"
 #include "basalt/kernels/dec_gdn.hpp"
@@ -67,7 +66,6 @@ bool Verifier::WindowRecorder::pre(int64_t l) {
         const bool ple_fork = ple_win && pside != nullptr && v_.ev_fork_ != nullptr && v_.ev_join_ != nullptr;
         if (ple_side) {
             cudaStreamWaitEvent(cs, v_.ev_ple_join_, 0);
-            ple_open = false;
         } else if (ple_batch_kv || ple_win) {
             try {
                 if (ple_fork) {
@@ -154,37 +152,6 @@ bool Verifier::WindowRecorder::pre(int64_t l) {
     // window CUDA0 runs the whole layer and the doorbell only passes
     const bool gs_ring = dm && v_.gs_nk0_ > 0 && !is_qsa_layer(g, l);
     const bool gs_split = gs_ring && !v_.batch_rec_;
-    // a GDN layer's middle as one persistent kernel (mid_chain.hpp) between the layer's two hc reads: the qkv + z pair,
-    // the recurrence and the output projection, bitwise the kernels it replaces
-    bool mid_ok = false;
-    MidChainArgs ma;
-    if (dec_hc && read_q8 && router_multi && !is_qsa_layer(g, l) && !v_.prof_on_ && !v_.batch_rec_ && !gs_split &&
-        n <= kMidChainMaxT && N == 2560 && dec_gdnf_mode() != 0 && (dense_tc_mask() & 4)) {
-        const WeightRef *wqkv = v.get("attn_qkv.weight"), *wg = v.get("attn_gate.weight"),
-                        *wout = v.get("ssm_out.weight"), *wa = v.get("ssm_alpha.weight"),
-                        *wb = v.get("ssm_beta.weight"), *wc = v.get("ssm_conv1d.weight"),
-                        *wnm = v.get("ssm_norm.weight"), *wdt = v.get("ssm_dt.bias"), *wsa = v.get("ssm_a");
-        if (wqkv && wg && wout && wa && wb && wc && wnm && wdt && wsa && wqkv->native_data && wg->native_data &&
-            wout->native_data && dense_tc_pair_supported(wqkv->native_type, wg->native_type, (int) N) &&
-            dense_tc_supported(wout->native_type, (int) ZV) &&
-            dense_tc_type_on(wout->native_type)) {
-            const int64_t gi = gdn_idx[(size_t) l];
-            ma.T = n;
-            ma.xq = v_.xq_;
-            ma.wq = wqkv->native_data; ma.wz = wg->native_data; ma.wo = wout->native_data;
-            ma.type_q = wqkv->native_type; ma.type_z = wg->native_type; ma.type_o = wout->native_type;
-            DecRecArgs& ra = ma.rec;
-            ra.state = ss.gdn_state + (size_t) (gi - ss.gdn_ord0) * gdn_floats;
-            ra.qkv = v_.qkv_L_ + (size_t) gi * MT * C; ra.conv_w = (const float*) wc->data; ra.x = v_.mixed_;
-            ra.w_alpha = (const uint16_t*) wa->data; ra.w_beta = (const uint16_t*) wb->data;
-            ra.dt = (const float*) wdt->data; ra.ssm_a = (const float*) wsa->data; ra.z = v_.z_;
-            ra.gamma = (const float*) wnm->data; ra.h = v_.h_L_ + (size_t) gi * MT * C;
-            ra.gate = v_.gate_L_ + (size_t) gi * MT * HV; ra.beta = v_.beta_L_ + (size_t) gi * MT * HV; ra.yq = v_.xq_;
-            ra.C = (int) C; ra.n_embd = (int) N; ra.h_k = (int) HK; ra.h_v = (int) HV; ra.eps = EPS;
-            ma.bo = v_.bo_;
-            mid_ok = mid_chain_supported(ma);
-        }
-    }
     {
         // the read's first kernel follows a combine, copy or wait: a plain launch, except after the device-planned
         // tail's combine kernel (PDL2)
@@ -194,9 +161,8 @@ bool Verifier::WindowRecorder::pre(int64_t l) {
             HcFusedArgs h = hc_args(0, pending, v_.inj2_, v_.inj_);
             if (read_q8) h.xq = v_.xq_;
             // the GDN qkv+z pair kernel follows (dense_tc_pair_mask & 16): its blocks start on the SMs the read leaves
-            h.next_early = mid_ok || (read_q8 && (kernels::dense_tc_pair_mask() & 16) &&
-                           !is_qsa_layer(g, l) && N == 2560 && n <= kDecMaxT &&
-                           dec_gdnf_mode() != 0);
+            h.next_early = read_q8 && (kernels::dense_tc_pair_mask() & 16) && !is_qsa_layer(g, l) && N == 2560 &&
+                           n <= kDecMaxT && dec_gdnf_mode() != 0;
             // a QSA layer's query projection follows (qsaf_wide path): its blocks start with the read
             if (read_q8 && is_qsa_layer(g, l) && N == 2560 && n <= kDecMaxT) {
                 const QsaState& st0 = ss.qsa_states[qsa_idx[(size_t) l]];
@@ -221,21 +187,9 @@ bool Verifier::WindowRecorder::pre(int64_t l) {
         cudaStreamWaitEvent(cs, v_.lz_join_, 0);
         lz_open = false;
     }
-    if (mid_ok && (ple_open || lz_open)) {   // the mid chain needs every SM: no side branch may run beside it
-        err = "verify layer " + std::to_string(l) + ": the mid chain was recorded beside an open side branch";
-        return false;
-    }
-    if (mid_ok) {
-        // the first read's dependent: its first pair tiles are already issued by the time the read ends (PDL)
-        PdlScope ps(pdl, mid_ord == 0);
-        ma.ord = mid_ord++;
-        mid_chain(ma, cs);
-    }
     float* xm = v_.mixed_;
     try {
-        if (mid_ok) {
-            // the middle ran in the mid chain
-        } else if (!is_qsa_layer(g, l)) {
+        if (!is_qsa_layer(g, l)) {
             if (!gdn(l, v, read_q8, gs_split)) return false;
         } else {
             if (!qsa(l, v, read_q8)) return false;
@@ -248,7 +202,7 @@ bool Verifier::WindowRecorder::pre(int64_t l) {
         dec_moe_mix_combine(v_.dm_->m_w + 52, (uint32_t) (l - v_.lb_ + 1), v_.gs_m_part_, v_.bo_, n * (int) N, cs);
     else if (gs_ring)
         dec_moe_mix_wait(v_.dm_->m_w + 52, (uint32_t) (l - v_.lb_ + 1), cs);
-    if (ple_side && l == 0 && !ple_fork()) return false;   // after layer 0's middle: no mid chain before layer 1's join
+    if (ple_side && l == 0 && !ple_fork()) return false;   // after layer 0's middle, before layer 1's join
     stamp(l, 16);
     bool routed = false;   // the fused read ran the router too
     const bool sh_fork = !v_.prof_on_ && v_.sh_cs_ != nullptr && v_.ev_fork_ != nullptr &&

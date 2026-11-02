@@ -38,7 +38,7 @@ void usage() {
                  "                       logits on stderr\n"
                  "  --gpu A,B,..|auto    the GPUs to use, as nvidia-smi numbers them (within CUDA_VISIBLE_DEVICES when\n"
                  "                       set): exactly these, the first the main card; the engine gives the rest their\n"
-                 "                       roles.  auto = every Blackwell card, the fastest as main.  Default: GPU 0 alone\n"
+                 "                       roles.  auto = every Ada card, the fastest as main.  Default: GPU 0 alone\n"
                  "  --gpu-plan           print the --gpu choice as one JSON line and exit (no model needed)\n"
                  "  --mtp-window N       the drafter attends to the last N cells (default 32768; 0 = every cell)\n"
                  "  --stop-eos           stop when the model emits an end-of-turn token\n"

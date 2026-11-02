@@ -58,7 +58,7 @@ std::string wait_abort_text(unsigned long long code) {
     const unsigned who = (unsigned) (code >> 56) & 0x7fu;
     char buf[128];
     std::snprintf(buf, sizeof buf, "%s: kind %u, line %u, block %u",
-                  who == kWaitMidChain ? "mid chain" : who == kWaitCommitFinisher ? "commit finisher" : "device wait",
+                  who == kWaitCommitFinisher ? "commit finisher" : "device wait",
                   (unsigned) (code >> 48) & 0xffu, (unsigned) (code >> 32) & 0xffffu, (unsigned) code);
     return buf;
 }

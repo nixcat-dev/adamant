@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <functional>
+#include <immintrin.h>
 #include <memory>
 #include <random>
 #include <sstream>
@@ -827,6 +828,13 @@ int main(int argc, char** argv) {
                 for (size_t i = 0; i < a.size(); ++i) nd3 += std::memcmp(&a[i], &c3[i], 4) != 0;
                 std::snprintf(what, sizeof what, "combine, no wait T=%d", T);
                 report(what, l, nd3, a.size());
+                K::dec_moe_combine(d_parts, h_peer, h_cpu, d_plan, d_w, d_sh, d_bo3, H, KK, T, nullptr, nullptr, 6, s0, true);
+                ck(cudaStreamSynchronize(s0), "ordered dependent combine");
+                const auto cdep = down(d_bo3, (size_t) T * H);
+                size_t ndep = 0;
+                for (size_t i = 0; i < c3.size(); ++i) ndep += std::memcmp(&c3[i], &cdep[i], 4) != 0;
+                std::snprintf(what, sizeof what, "combine, ordered dependent T=%d", T);
+                report(what, l, ndep, c3.size());
                 if (bench) {
                     const double uc = time_us(s0, 200, [&] {
                         K::dec_moe_combine(d_parts, h_peer, h_cpu, d_plan, d_w, d_sh, d_bo3, H, KK, T, nullptr, nullptr, 6, s0);
@@ -849,6 +857,8 @@ int main(int argc, char** argv) {
                     if (kind[i] == 2)
                         for (int c = 0; c < (int) H; ++c)
                             if (late) std::memcpy(h_peer + (size_t) i * H + c, &tagw, 4);
+                std::atomic_thread_fence(std::memory_order_seq_cst);
+                _mm_sfence();
                 *(volatile uint32_t*) (h_words + 32) = late ? 5u : 6u;
                 *(volatile uint32_t*) (h_words + 48) = late ? 5u : 6u;
                 std::atomic_thread_fence(std::memory_order_seq_cst);
@@ -856,9 +866,14 @@ int main(int argc, char** argv) {
                                    h_words + 32, h_words + 48, d_seen);
                 if (late) {   // the peer's rows land, then the pool's word
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
-                    for (int i = 0; i < n; ++i)
-                        if (kind[i] == 2) std::memcpy(h_peer + (size_t) i * H, peer.data() + (size_t) i * H, H * 4);
+                    // Publish each word once; bulk copies can revisit an already-consumed prefix.
+                    for (int i = 0; i < n; ++i) {
+                        if (kind[i] != 2) continue;
+                        volatile float* dst = h_peer + (size_t) i * H;
+                        for (int c = 0; c < (int) H; ++c) dst[c] = peer[(size_t) i * H + c];
+                    }
                     std::atomic_thread_fence(std::memory_order_seq_cst);
+                    _mm_sfence();
                     *(volatile uint32_t*) (h_words + 32) = 6u;
                     std::this_thread::sleep_for(std::chrono::milliseconds(2));
                     *(volatile uint32_t*) (h_words + 48) = 6u;
@@ -867,21 +882,38 @@ int main(int argc, char** argv) {
                 const auto c4 = down(d_bo4, (size_t) T * H);
                 size_t nd4 = 0;
                 for (size_t i = 0; i < a.size(); ++i) nd4 += std::memcmp(&a[i], &c4[i], 4) != 0;
+                const size_t out_diff = nd4;
                 unsigned seen = 0;
                 ck(cudaMemcpy(&seen, d_seen, 4, cudaMemcpyDeviceToHost), "seen");
                 nd4 += seen != 6u;
+                size_t tag_diff = 0;
                 for (int i = 0; i < n; ++i) {
                     if (kind[i] != 2) continue;
                     float* r = h_peer + (size_t) i * H;
                     for (int c = 0; c < (int) H; ++c) {
                         uint32_t u;
                         std::memcpy(&u, r + c, 4);
-                        nd4 += u != tagw;
+                        if (u != tagw && tag_diff < 8)
+                            std::printf("  peer row %d column %d: tag=%08x want=%08x\n", i, c, u, tagw);
+                        tag_diff += u != tagw;
                     }
                     std::memcpy(r, peer.data() + (size_t) i * H, H * 4);   // for the cases below
                 }
+                nd4 += tag_diff;
                 std::snprintf(what, sizeof what, "combine, own wait%s T=%d", late ? " (landing late)" : "", T);
                 report(what, l, nd4, a.size());
+                if (nd4 != 0) {
+                    std::printf("  combine diagnostics: output=%zu peer-tags=%zu seen=%u want=6\n", out_diff, tag_diff, seen);
+                    int shown = 0;
+                    for (size_t i = 0; i < a.size() && shown < 8; ++i) {
+                        if (std::memcmp(&a[i], &c4[i], 4) == 0) continue;
+                        uint32_t want, got;
+                        std::memcpy(&want, &a[i], 4);
+                        std::memcpy(&got, &c4[i], 4);
+                        std::printf("  output[%zu]: reference=%08x actual=%08x\n", i, want, got);
+                        ++shown;
+                    }
+                }
                 if (bench && !late) {   // one launch at a time: each puts back the tag words the next would wait on
                     cudaEvent_t b0, b1;
                     cudaEventCreate(&b0);

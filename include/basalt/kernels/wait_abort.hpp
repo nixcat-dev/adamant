@@ -11,7 +11,7 @@
 namespace basalt::kernels {
 
 /// who timed out (the code's bits 56..62)
-constexpr unsigned kWaitMidChain = 1, kWaitCommitFinisher = 2;
+constexpr unsigned kWaitCommitFinisher = 2;
 /// a bounded wait reads the word only once it has waited this long
 constexpr unsigned long long kWaitPollNs = 1000000ull;
 

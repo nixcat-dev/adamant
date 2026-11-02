@@ -1,12 +1,20 @@
-// tests/kernels/dense_tc_parity.cpp - dense_tc (DEC_DTC) against native_mmvq, and its column contract.
+// tests/kernels/dense_tc_parity.cpp - dense_tc (DEC_DTC) against native_mmvq and against a plain CPU reference, and
+// its column contract.
 //
 //     build/dense_tc_parity [--bench]
 //
-// Random GGUF blocks (fp16 scales rewritten as normal values) and normal activations, one q8_1 quantization shared
-// by both paths, at the model's projection shapes.  Checks:
+// Runs only on the one compute capability the kernels are built for (basalt/cuda_target.hpp), random GGUF blocks (fp16
+// scales rewritten as normal values) and normal activations, one q8_1 quantization shared by both paths, at the
+// model's projection shapes.  Checks, per case:
 //   - every column of a T-column dense_tc call is bitwise equal to the same column of the 8-column call (T = 1..8);
-//   - the error against native_mmvq's single-column outputs (the current numerics): max |diff| / max |ref| and the
-//     RMS of the diff over the RMS of ref, per case; it fails above 1e-3 RMS.
+//   - against native_mmvq's single-column outputs (the current numerics): max |diff|, max |diff| / max |ref| and the
+//     RMS of the diff over the RMS of ref; it fails above 1e-3 RMS or on any non-finite value;
+//   - against the plain CPU reference of the operation, every format: the row dequantized by the project's validated
+//     scalar dequantizers (artifact/dequant.hpp, ggml's own conversion for IQ3_S), then the dot products with the q8_1
+//     columns accumulated in double; max |diff|, max |diff| / max |ref| and the RMS, over the 8-column call and over
+//     every T's columns;
+//   - the output is neither the untouched buffer nor all zeros, so a kernel that wrote nothing cannot pass;
+//   - once per format, the two reference dequantizers agree on a random row (ref cross-check lines).
 // --bench: native_mmvq and dense_tc timed per T as CUDA graphs over enough weight copies that the L2 holds none
 // (launched as programmatic dependents under PDL=1).
 #include "basalt/kernels/dense_tc.hpp"
@@ -14,6 +22,12 @@
 #include "basalt/kernels/pdl.hpp"
 
 #include <cuda_runtime.h>
+
+// The reference dequantizers: the project's validated scalar ones (artifact/dequant.hpp, header-only) and ggml's own
+// ggml_get_type_traits(type)->to_float (ggml_quants.c).  The test's reference is existing code, not a transcription.
+#include "basalt/artifact/dequant.hpp"
+#include "basalt/cuda_target.hpp"
+#include "basalt/ggml/ggml.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,31 +109,135 @@ std::vector<uint8_t> make_weights(const Case& c, std::mt19937& rng) {
     return w;
 }
 
-// float64 reference for Q8_0: sum over blocks of d_w * d_x * (exact integer dot), from the same q8_1 columns
-std::vector<double> cpu_q8_0(const Case& c, const std::vector<uint8_t>& w, const std::vector<uint8_t>& xq, int cols) {
+// One error accumulator per comparison.  Non-finite values are counted, never folded into a max: std::max keeps its
+// first argument when the second is a NaN, so a NaN output would otherwise read as no error at all.
+struct Err {
+    double maxabs = 0, maxref = 0, sd = 0, sr = 0;
+    long long nonfinite = 0;
+
+    void add(double got, double want) {
+        if (!std::isfinite(got) || !std::isfinite(want)) {
+            ++nonfinite;
+            return;
+        }
+        const double d = std::fabs(got - want);
+        maxabs = std::max(maxabs, d);
+        maxref = std::max(maxref, std::fabs(want));
+        sd += d * d;
+        sr += want * want;
+    }
+    double rms() const { return std::sqrt(sd / std::max(sr, 1e-300)); }     // RMS of the diff over the RMS of the ref
+    double relative() const { return maxabs / std::max(maxref, 1e-300); }   // max |diff| over max |ref|
+};
+
+// The project's scalar dequantizers over one row, block by block: the same values the engine's CPU paths use, and the
+// counterpart of ggml's to_float below.  IQ3_S has no dequantizer there; it is read through ggml's.
+void artifact_row(int type, const uint8_t* row, int n_in, float* out) {
+    switch (type) {
+    case 8:
+        for (int b = 0; b < n_in / 32; ++b) basalt::dequantize_q8_0(row + (std::size_t) b * 34, out + 32 * b);
+        break;
+    case 42:
+        for (int b = 0; b < n_in / 64; ++b) basalt::dequantize_q2_0(row + (std::size_t) b * 18, out + 64 * b);
+        break;
+    case 12:
+        for (int b = 0; b < n_in / 256; ++b) basalt::dequantize_q4_K(row + (std::size_t) b * 144, out + 256 * b);
+        break;
+    case 13:
+        for (int b = 0; b < n_in / 256; ++b) basalt::dequantize_q5_K(row + (std::size_t) b * 176, out + 256 * b);
+        break;
+    case 14:
+        for (int b = 0; b < n_in / 256; ++b) basalt::dequantize_q6_K(row + (std::size_t) b * 210, out + 256 * b);
+        break;
+    case 11:
+        for (int b = 0; b < n_in / 256; ++b) basalt::dequantize_q3_K(row + (std::size_t) b * 110, out + 256 * b);
+        break;
+    case 23:
+        for (int b = 0; b < n_in / 256; ++b) basalt::dequantize_iq4_xs(row + (std::size_t) b * 136, out + 256 * b);
+        break;
+    default:
+        break;
+    }
+}
+
+// ggml's reference conversion of one row (ggml_get_type_traits(type)->to_float).
+void ggml_row(int type, const uint8_t* row, int n_in, float* out) {
+    const struct ggml_type_traits* tr = ::ggml_get_type_traits((enum ggml_type) type);
+    if (tr == nullptr || tr->to_float == nullptr) {
+        std::printf("ggml_quants has no reference dequantizer for type %d\n", type);
+        std::abort();
+    }
+    tr->to_float(row, out, n_in);
+}
+
+// One reference row: random blocks with the formats' fp16 scales rewritten as normal values, as make_weights does.
+std::vector<uint8_t> make_row(const Case& c, std::mt19937& rng) {
+    const std::size_t row_bytes = basalt::kernels::native_mmvq_weight_bytes(c.type, c.n_in, 1);
+    std::vector<uint8_t> row(row_bytes);
+    for (auto& b : row) b = (uint8_t) (rng() & 0xff);
+    for (std::size_t k = 0; k * (std::size_t) c.block_bytes < row_bytes; ++k)
+        for (int at : c.scale_at)
+            if (at >= 0) {
+                const uint16_t h = sane_half(rng);
+                std::memcpy(&row[k * (std::size_t) c.block_bytes + (std::size_t) at], &h, 2);
+            }
+    return row;
+}
+
+// The two references against each other on one row of a format.  Both are existing code, so this is a check of the
+// pair the test relies on, run once per format: a disagreement is a finding, not a tolerance question.
+bool ref_cross_check(const Case& c, std::mt19937& rng) {
+    if (c.type == 21) {
+        std::printf("ref cross-check %-10s %5d values: ggml's to_float only (the project has no IQ3_S dequantizer)\n",
+                    c.name, c.n_in);
+        return true;
+    }
+    const std::vector<uint8_t> row = make_row(c, rng);
+    std::vector<float> a((std::size_t) c.n_in), b((std::size_t) c.n_in);
+    artifact_row(c.type, row.data(), c.n_in, a.data());
+    ggml_row(c.type, row.data(), c.n_in, b.data());
+    long long differ = 0, nonfinite = 0;
+    double maxd = 0, maxv = 0;
+    for (int i = 0; i < c.n_in; ++i) {
+        if (!std::isfinite(a[i]) || !std::isfinite(b[i])) {
+            ++nonfinite;
+            continue;
+        }
+        differ += std::memcmp(&a[i], &b[i], 4) != 0;
+        maxd = std::max(maxd, (double) std::fabs(a[i] - b[i]));
+        maxv = std::max(maxv, (double) std::fabs(b[i]));
+    }
+    const bool ok = nonfinite == 0 && maxd <= 1e-6 * std::max(maxv, 1e-30);
+    std::printf("ref cross-check %-10s %5d values: %lld differ bitwise, max |d| %.3e (relative %.3e), %lld nonfinite  "
+                "%s\n",
+                c.name, c.n_in, differ, maxd, maxd / std::max(maxv, 1e-30), nonfinite, ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+// y = W x in double from the dequantized rows: the plain CPU reference of the whole projection, block over block in
+// ascending order (the q8_1 columns' scales are fp16, their codes int8).
+std::vector<double> cpu_ref(const Case& c, const std::vector<uint8_t>& w, const std::vector<uint8_t>& xq, int cols) {
     const int nb = c.n_in / 32;
     const std::size_t qcol = (std::size_t) nb * 36;
-    auto h2f = [](uint16_t h) {
-        const int e = (h >> 10) & 31, m = h & 1023;
-        const double v = e == 0 ? std::ldexp((double) m, -24) : std::ldexp((double) (1024 + m), e - 25);
-        return (h >> 15) ? -v : v;
-    };
-    std::vector<double> y((std::size_t) cols * c.n_out);
-    for (int j = 0; j < cols; ++j)
-        for (int r = 0; r < c.n_out; ++r) {
+    const std::size_t row_bytes = basalt::kernels::native_mmvq_weight_bytes(c.type, c.n_in, 1);
+    std::vector<double> y((std::size_t) cols * c.n_out), row((std::size_t) c.n_in);
+    std::vector<float> rowf((std::size_t) c.n_in);
+    for (int r = 0; r < c.n_out; ++r) {
+        const uint8_t* rp = &w[(std::size_t) r * row_bytes];
+        if (c.type == 21) ggml_row(c.type, rp, c.n_in, rowf.data());
+        else artifact_row(c.type, rp, c.n_in, rowf.data());
+        for (int i = 0; i < c.n_in; ++i) row[(std::size_t) i] = (double) rowf[(std::size_t) i];
+        for (int j = 0; j < cols; ++j) {
             double sum = 0;
             for (int b = 0; b < nb; ++b) {
-                const uint8_t* wb = &w[((std::size_t) r * nb + b) * 34];
-                const uint8_t* xb = &xq[j * qcol + (std::size_t) b * 36];
-                uint16_t dwh, dxh;
-                std::memcpy(&dwh, wb, 2);
-                std::memcpy(&dxh, xb, 2);
-                long dot = 0;
-                for (int k = 0; k < 32; ++k) dot += (long) (int8_t) wb[2 + k] * (int8_t) xb[4 + k];
-                sum += h2f(dwh) * h2f(dxh) * (double) dot;
+                const uint8_t* xb = &xq[(std::size_t) j * qcol + (std::size_t) b * 36];
+                double dot = 0;
+                for (int k = 0; k < 32; ++k) dot += row[(std::size_t) b * 32 + k] * (double) (int8_t) xb[4 + k];
+                sum += (double) basalt::fp16_to_fp32(basalt::read_u16(xb)) * dot;
             }
             y[(std::size_t) j * c.n_out + r] = sum;
         }
+    }
     return y;
 }
 
@@ -158,52 +276,54 @@ bool parity(const Case& c, cudaStream_t s) {
     std::vector<float> ref((std::size_t) TM * c.n_out), got((std::size_t) (TM + 1) * TM * c.n_out);
     cudaMemcpy(ref.data(), yref, ybytes, cudaMemcpyDeviceToHost);
     cudaMemcpy(got.data(), yt, got.size() * 4, cudaMemcpyDeviceToHost);
-    long long bits = 0, nonfinite = 0;
+    long long bits = 0, nonfinite_t = 0;
     const float* g8 = got.data() + (std::size_t) TM * TM * c.n_out;
     for (int T = 1; T <= TM; ++T)
         for (int j = 0; j < T; ++j)
             for (int r = 0; r < c.n_out; ++r) {
                 const float a = got[((std::size_t) T * TM + j) * c.n_out + r], b = g8[(std::size_t) j * c.n_out + r];
                 if (std::memcmp(&a, &b, 4) != 0) ++bits;
-                if (!std::isfinite(a)) ++nonfinite;
+                if (!std::isfinite(a)) ++nonfinite_t;
             }
-    double maxd = 0, maxr = 0, sd = 0, sr = 0;
-    for (std::size_t i = 0; i < ref.size(); ++i) {
-        const double d = std::fabs((double) g8[i] - (double) ref[i]);
-        maxd = std::max(maxd, d);
-        maxr = std::max(maxr, std::fabs((double) ref[i]));
-        sd += d * d;
-        sr += (double) ref[i] * ref[i];
-    }
-    const double rms = std::sqrt(sd / std::max(sr, 1e-300));
-    bool ok = bits == 0 && nonfinite == 0 && rms < 1e-3;
-    if (c.type == 8) {   // against float64, for every T's columns; native_mmvq's own error alongside
+    Err e_nat;   // against the current kernel: the numerics the engine runs today
+    for (std::size_t i = 0; i < ref.size(); ++i) e_nat.add((double) g8[i], (double) ref[i]);
+    // a kernel that wrote nothing leaves the 0xff fill (a NaN) or zeros: neither may pass
+    long long unwritten = 0, zeros = 0;
+    for (int j = 0; j < TM; ++j)
+        for (int r = 0; r < c.n_out; ++r) {
+            const float v = g8[(std::size_t) j * c.n_out + r];
+            unwritten += !std::isfinite(v);
+            zeros += v == 0.0f;
+        }
+    const bool wrote = unwritten == 0 && zeros < (long long) TM * c.n_out;
+    bool ok = bits == 0 && nonfinite_t == 0 && unwritten == 0 && wrote && e_nat.nonfinite == 0 && e_nat.rms() < 1e-3;
+    // against the plain CPU reference (the validated scalar dequantizers, then accumulation in double), every format
+    Err e_cpu, e_cpu_t;
+    {
         std::vector<uint8_t> xh(qcol * TM);
         cudaMemcpy(xh.data(), xq, xh.size(), cudaMemcpyDeviceToHost);
-        const std::vector<double> ex = cpu_q8_0(c, w, xh, TM);
-        double dd = 0, dn = 0, rr = 0, mx = 0;
-        for (std::size_t i = 0; i < ex.size(); ++i) {
-            dd += (g8[i] - ex[i]) * (g8[i] - ex[i]);
-            dn += (ref[i] - ex[i]) * (ref[i] - ex[i]);
-            rr += ex[i] * ex[i];
-            mx = std::max(mx, std::fabs(ex[i]));
-        }
-        const double rd = std::sqrt(dd / std::max(rr, 1e-300)), rn = std::sqrt(dn / std::max(rr, 1e-300));
-        double tmax = 0;   // every T's column j against float64 too
+        const std::vector<double> ex = cpu_ref(c, w, xh, TM);
+        for (std::size_t i = 0; i < ex.size(); ++i) e_cpu.add((double) g8[i], ex[i]);
         for (int T = 1; T <= TM; ++T)
             for (int j = 0; j < T; ++j)
                 for (int r = 0; r < c.n_out; ++r)
-                    tmax = std::max(tmax, std::fabs(got[((std::size_t) T * TM + j) * c.n_out + r] -
-                                                    ex[(std::size_t) j * c.n_out + r]));
-        const bool k = rd < 1e-5 && tmax < 1e-4 * mx;
-        std::printf("   %s float64: dense_tc rms %.3e  native_mmvq rms %.3e  worst |d| over all T %.3e  %s\n", c.name, rd,
-                    rn, tmax, k ? "PASS" : "FAIL");
+                    e_cpu_t.add((double) got[((std::size_t) T * TM + j) * c.n_out + r],
+                                ex[(std::size_t) j * c.n_out + r]);
+        const bool k = e_cpu.nonfinite == 0 && e_cpu_t.nonfinite == 0 && e_cpu.maxref > 0 && e_cpu.rms() < 1e-5 &&
+                       e_cpu.relative() <= 1e-4 && e_cpu_t.maxabs <= 1e-4 * e_cpu.maxref;
+        std::printf("   %s vs cpu double: max|d| %.3e  max|d|/max|ref| %.3e  rms %.3e  nonfinite %lld (every T: max|d| "
+                    "%.3e, %lld nonfinite)  %s\n",
+                    c.name, e_cpu.maxabs, e_cpu.relative(), e_cpu.rms(), e_cpu.nonfinite, e_cpu_t.maxabs,
+                    e_cpu_t.nonfinite, k ? "PASS" : "FAIL");
         ok = ok && k;
     }
-    std::printf("%-12s %5d x %5d  T-columns bitwise: %s (%lld diff, %lld nonfinite)  vs native: max|d|/max|ref| "
-                "%.3e  rms %.3e  %s\n",
-                c.name, c.n_in, c.n_out, bits == 0 ? "yes" : "NO", bits, nonfinite, maxd / std::max(maxr, 1e-30), rms,
-                ok ? "PASS" : "FAIL");
+    if (!wrote)
+        std::printf("   %s wrote no output: %lld of %d values are not finite, %lld are zero\n", c.name, unwritten,
+                    TM * c.n_out, zeros);
+    std::printf("%-12s %5d x %5d  T-columns bitwise: %s (%lld diff, %lld nonfinite)  vs native_mmvq: max|d| %.3e  "
+                "max|d|/max|ref| %.3e  rms %.3e  nonfinite %lld  %s\n",
+                c.name, c.n_in, c.n_out, bits == 0 ? "yes" : "NO", bits, nonfinite_t, e_nat.maxabs, e_nat.relative(),
+                e_nat.rms(), e_nat.nonfinite, ok ? "PASS" : "FAIL");
     cudaFree(dw); cudaFree(xq); cudaFree(dx); cudaFree(yref); cudaFree(yt);
     return ok;
 }
@@ -254,23 +374,24 @@ bool pair_parity(const Case& a, const Case& b, cudaStream_t s) {
                 for (int r = 0; r < c.n_out; ++r)
                     if (std::memcmp(&got[((std::size_t) T * TM + j) * c.n_out + r], &g8[(std::size_t) j * c.n_out + r], 4))
                         ++bits;
-        double maxd = 0, maxr = 0, sd = 0, sr = 0;
-        for (std::size_t i = 0; i < ref.size(); ++i) {
-            const double d = std::fabs((double) g8[i] - (double) ref[i]);
-            maxd = std::max(maxd, d);
-            maxr = std::max(maxr, std::fabs((double) ref[i]));
-            sd += d * d;
-            sr += (double) ref[i] * ref[i];
-        }
-        const double rms = std::sqrt(sd / std::max(sr, 1e-300));
-        const bool k = bits == 0 && rms < 1e-3;
+        Err e_nat;   // against the current kernel
+        for (std::size_t i = 0; i < ref.size(); ++i) e_nat.add((double) g8[i], (double) ref[i]);
+        long long unwritten = 0, zeros = 0;   // nothing written leaves the 0xff fill (a NaN)
+        for (int j = 0; j < TM; ++j)
+            for (int r = 0; r < c.n_out; ++r) {
+                const float v = g8[(std::size_t) j * c.n_out + r];
+                unwritten += !std::isfinite(v);
+                zeros += v == 0.0f;
+            }
+        const bool k = bits == 0 && e_nat.nonfinite == 0 && e_nat.rms() < 1e-3 && unwritten == 0 &&
+                       zeros < (long long) TM * c.n_out;
         uint64_t h = 1469598103934665603ull;   // FNV-1a of the 8-column output
         const uint8_t* hb = reinterpret_cast<const uint8_t*>(g8);
         for (std::size_t i = 0; i < (std::size_t) TM * c.n_out * 4; ++i) h = (h ^ hb[i]) * 1099511628211ull;
-        std::printf("pair %-10s + %-10s [%d] T-columns bitwise: %s (%lld)  vs native: max|d|/max|ref| %.3e  rms %.3e  "
-                    "hash %016llx  %s\n",
-                    a.name, b.name, m, bits == 0 ? "yes" : "NO", bits, maxd / std::max(maxr, 1e-30), rms,
-                    (unsigned long long) h, k ? "PASS" : "FAIL");
+        std::printf("pair %-10s + %-10s [%d] T-columns bitwise: %s (%lld)  vs native_mmvq: max|d| %.3e  "
+                    "max|d|/max|ref| %.3e  rms %.3e  nonfinite %lld  unwritten %lld  hash %016llx  %s\n",
+                    a.name, b.name, m, bits == 0 ? "yes" : "NO", bits, e_nat.maxabs, e_nat.relative(), e_nat.rms(),
+                    e_nat.nonfinite, unwritten, (unsigned long long) h, k ? "PASS" : "FAIL");
         ok = ok && k;
     }
     cudaFree(dwa); cudaFree(dwb); cudaFree(xq); cudaFree(dx); cudaFree(ra); cudaFree(rb); cudaFree(ya); cudaFree(yb);
@@ -418,11 +539,13 @@ void bench_pair(cudaStream_t s, bool warm) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    int dev = 0, major = 0;
+    int dev = 0, major = 0, minor = 0;
     cudaGetDevice(&dev);
     cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
-    if (major < 9) {
-        std::printf("dense_tc needs thread-block clusters; skipped\n");
+    cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
+    if (!basalt::cuda_target::supports(major, minor)) {   // the kernels are built for one target, not a range
+        std::printf("dense_tc is built for compute capability %d.%d, this device is %d.%d; skipped\n",
+                    basalt::cuda_target::major, basalt::cuda_target::minor, major, minor);
         return 77;
     }
     cudaStream_t s;
@@ -445,9 +568,17 @@ int main(int argc, char** argv) {
     }
     bool ok = true;
     if (!only_bench) {
-        if (!pair_only)
+        {   // the reference itself: the project's scalar dequantizers against ggml's, once per format
+            std::mt19937 rng(20260101u);
+            bool seen[64] = {};
             for (const Case& c : CASES)
-                if (c.type != 21 || c.n_in % 2048 == 0) ok = parity(c, s) && ok;
+                if (!seen[c.type]) {
+                    seen[c.type] = true;
+                    ok = ref_cross_check(c, rng) && ok;
+                }
+        }
+        if (!pair_only)
+            for (const Case& c : CASES) ok = parity(c, s) && ok;   // parity() skips a shape the path rejects
         const int pairs[][2] = {{0, 6}, {1, 5}, {2, 4}, {3, 6}, {0, 5}, {16, 17}, {3, 17}, {20, 21}, {16, 21}, {1, 17},
                                 {20, 17}, {25, 26}, {25, 4}, {0, 26}};
         for (const auto& pr : pairs) ok = pair_parity(CASES[pr[0]], CASES[pr[1]], s) && ok;

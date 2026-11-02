@@ -201,8 +201,9 @@ constexpr int kDmDiagWords = 16;
 std::string dec_moe_peer_diag(const uint32_t* diag);
 size_t dec_moe_peer_scratch_bytes(int n_embd, int n_ff);
 /// Blocks the peer kernel runs with on the current device (all co-resident); 0 when it cannot run there.  q2: the
-/// kernel for a model with Q2_0 gate/up layers.
-int dec_moe_peer_blocks(bool q2 = false);
+/// kernel for a model with Q2_0 gate/up layers; mix: the mixer build (a launch above its own count would never be
+/// fully resident, so dec_moe_peer_launch clamps to it).
+int dec_moe_peer_blocks(bool q2 = false, bool mix = false);
 /// Whether the persistent kernels cover this layer's expert formats.
 bool dec_moe_formats_ok(int gu_type, int d_type, int64_t n_embd, int64_t n_ff);
 /// Launches the peer window (cooperative) on `stream` of the current device; false on a launch error.

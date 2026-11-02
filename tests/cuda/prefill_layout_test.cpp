@@ -2,9 +2,9 @@
 // `Prefill::bytes_needed` counts every buffer `init` carves, and the attention half's, the MoE half's and the
 // hyper-connection rows' scratch share one region sized as the largest of them; `Prefill::layout_fits` carves the
 // same sequence over a region of exactly that count and fails when a buffer or an aliased set overruns it.  Swept over
-// chunk sizes around every threshold (the FP4 minimum, the streamed walk, the largest chunk), with and without an
+// chunk sizes around every threshold (the streamed walk's minimum, the largest chunk), with and without an
 // expert source, a resident and a streamed KV, and the ring depths.  The expert layout is process-wide, so the layout
-// is the argument: nvfp4 (every layer NVFP4 with a tail: the FP4 path), mixed (NVFP4 and K-quant layers),
+// is the argument: nvfp4 (every layer NVFP4 with a scale tail: MMQ's nvfp4 loader), mixed (NVFP4 and K-quant layers),
 // kquant (Q4_K / Q5_1) and q2 (no native layout, as in the IQ and Q2_0 packs).  Needs a CUDA device for the MMQ plan (exit 77 without).
 #include "basalt/core/layout.hpp"
 #include "basalt/core/session.hpp"

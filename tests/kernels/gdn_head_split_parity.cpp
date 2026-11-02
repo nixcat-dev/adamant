@@ -25,15 +25,21 @@
 #include "basalt/kernels/verify_kernels.hpp"
 
 #include <cuda_runtime.h>
+#include "basalt/cuda_target.hpp"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace basalt::kernels;
@@ -220,7 +226,7 @@ void run_card(const Card& k, int T, cudaStream_t s) {
     DecRecArgs a;
     a.state = k.state; a.qkv = k.qkv; a.conv_w = k.conv_w; a.x = k.x; a.w_alpha = k.wa; a.w_beta = k.wb;
     a.dt = k.dt; a.ssm_a = k.ssm_a; a.z = k.z; a.gamma = k.gamma; a.h = k.h; a.gate = k.gate; a.beta = k.beta;
-    a.yq = k.yq; a.C = k.c; a.n_embd = N; a.h_k = k.hk; a.h_v = k.hv; a.eps = EPS; a.early_trigger = false;
+    a.yq = k.yq; a.C = k.c; a.n_embd = N; a.h_k = k.hk; a.h_v = k.hv; a.eps = EPS;
     dec_gdn_rec(a, T, s);
     native_mmvq(k.to, k.wo, k.yq, k.out, k.zv, N, T, s);
 }
@@ -314,8 +320,7 @@ long long check_mapped(const Card& whole, const GdnHeadSlice& g, int T, const st
         DecRecArgs a;
         a.state = whole.state; a.qkv = pq; a.conv_w = whole.conv_w; a.x = whole.x; a.w_alpha = whole.wa;
         a.w_beta = whole.wb; a.dt = whole.dt; a.ssm_a = whole.ssm_a; a.z = pz; a.gamma = whole.gamma; a.h = h;
-        a.gate = ga; a.beta = be; a.yq = y; a.C = C; a.n_embd = N; a.h_k = HK; a.h_v = HV; a.eps = EPS;
-        a.early_trigger = false; a.k0 = g.k0; a.nk = g.nk; a.qkv_out = qo;
+        a.gate = ga; a.beta = be; a.yq = y; a.C = C; a.n_embd = N; a.h_k = HK; a.h_v = HV; a.eps = EPS; a.k0 = g.k0; a.nk = g.nk; a.qkv_out = qo;
         if (split) {
             a.o = o;
             dec_gdn_rec_split(a, T, s);
@@ -351,6 +356,50 @@ V* hmap(size_t n) {
     return p;
 }
 
+// Print mapped peer progress if a launch or stream wait stalls.
+class PeerWatch {
+public:
+    PeerWatch(const uint32_t* w, const unsigned long long* st, const uint32_t* diag, const unsigned int* arrive)
+        : w_(w), arrive_(arrive), st_(st), diag_(diag) {}
+    void start() {
+        th_ = std::thread([this] {
+            std::unique_lock<std::mutex> lk(mu_);
+            if (cv_.wait_for(lk, std::chrono::milliseconds(watch_ms()), [this] { return done_; })) return;
+            fired_ = true;
+            std::printf("    WATCH: the peer item is still inside the launch/stream sync %d ms after it started\n", watch_ms());
+            std::printf("    WATCH mapped words: seq %08x done %08x mseq %08x mdone %08x (ring, tokens, work bits)\n",
+                        w_[0], w_[16], w_[48], w_[52]);
+            std::printf("    WATCH arrive:");
+            for (int i = 0; i < 8; ++i) std::printf(" %08x", arrive_[i]);
+            std::printf("\n    WATCH stamps:");
+            for (int i = 0; i < 16; ++i) std::printf(" %llu", (unsigned long long) st_[i]);
+            std::printf("\n    WATCH diag:");
+            for (int i = 0; i < kDmDiagWords; ++i) std::printf(" %08x", diag_[i]);
+            std::printf("\n    WATCH %s\n", diag_[0] != 0u ? "the kernel recorded an abort" : "the kernel wrote no abort record");
+            std::fflush(stdout);
+        });
+    }
+    void stop() {
+        { std::lock_guard<std::mutex> lk(mu_); done_ = true; }
+        cv_.notify_all();
+        if (th_.joinable()) th_.join();
+        if (fired_) std::printf("    WATCH: the peer item returned after the %d ms window\n", watch_ms());
+    }
+    PeerWatch(const PeerWatch&) = delete;
+    PeerWatch& operator=(const PeerWatch&) = delete;
+
+private:
+    static constexpr int watch_ms() { return 3000; }
+    const volatile uint32_t* w_;
+    const volatile uint32_t* arrive_;
+    const volatile unsigned long long* st_;
+    const volatile uint32_t* diag_;
+    std::mutex mu_;
+    std::condition_variable cv_;
+    bool done_ = false, fired_ = false;
+    std::thread th_;
+};
+
 // The peer's mixer item: dm_peer_kernel over one ring with a mixer doorbell and no expert entries, on a slice card's
 // layer (its q8_1 and fp32 rows as CUDA0 publishes them); returns the item's out-projection partial, T rows of N
 std::vector<float> run_peer_item(const Card& k, int T, cudaStream_t s, bool& ok, std::vector<uint8_t>& yq_out) {
@@ -368,7 +417,6 @@ std::vector<float> run_peer_item(const Card& k, int T, cudaStream_t s, bool& ok,
     CK(cudaMemcpy(h_x, k.x, (size_t) T * N * 4, cudaMemcpyDefault));
     float *qkv, *z, *h, *ga, *be, *o, *x;
     void *yq, *mxq, *scr;
-    unsigned int* arr;
     CK(cudaMalloc(&qkv, sizeof(float) * kDecMaxT * k.c)); CK(cudaMalloc(&h, sizeof(float) * kDecMaxT * k.c));
     CK(cudaMalloc(&z, sizeof(float) * kDecMaxT * k.zv)); CK(cudaMalloc(&o, sizeof(float) * kDecMaxT * k.zv));
     CK(cudaMalloc(&ga, sizeof(float) * kDecMaxT * k.hv)); CK(cudaMalloc(&be, sizeof(float) * kDecMaxT * k.hv));
@@ -376,29 +424,34 @@ std::vector<float> run_peer_item(const Card& k, int T, cudaStream_t s, bool& ok,
     CK(cudaMalloc(&yq, native_q8_1_bytes(k.zv, kDecMaxT))); CK(cudaMalloc(&mxq, xq_stride));
     constexpr int kFf = 1024;
     CK(cudaMalloc(&scr, dec_moe_peer_scratch_bytes(N, kFf)));
-    CK(cudaMalloc(&arr, 64));
+    unsigned int* arr = hmap<unsigned int>(16);   // mapped: the watchdog reads the barrier live
+    std::memset((void*) arr, 0, 64);
     DmMixLayer m;
     m.wqkv = k.wqkv; m.wz = k.wz; m.wo = k.wo; m.tq = k.tq; m.tz = k.tz; m.to = k.to;
     DecRecArgs& r = m.rec;
     r.state = k.state; r.qkv = qkv; r.conv_w = k.conv_w; r.x = x; r.w_alpha = k.wa; r.w_beta = k.wb; r.dt = k.dt;
     r.ssm_a = k.ssm_a; r.z = z; r.gamma = k.gamma; r.h = h; r.gate = ga; r.beta = be; r.o = o; r.yq = yq;
-    r.C = k.c; r.n_embd = N; r.h_k = k.hk; r.h_v = k.hv; r.eps = EPS; r.early_trigger = false;
+    r.C = k.c; r.n_embd = N; r.h_k = k.hk; r.h_v = k.hv; r.eps = EPS;
     DmMixLayer* d_m = upload(std::vector<DmMixLayer>{m});
     uint8_t* d_mix = upload(std::vector<uint8_t>{1});
     CK(cudaMemsetAsync(arr, 0, 64, s));
     h_w[0] = 1u;                                         // the expert ring: no entries for the peer
     h_w[48] = 1u | (uint32_t) T << 16 | 1u << 30;        // the mixer doorbell with work
+    std::atomic_thread_fence(std::memory_order_seq_cst);
     DmPeerArgs pa;
     pa.rings_m = h_ring; pa.xq_m = h_xq; pa.xq_stride = xq_stride; pa.seq_m = h_w; pa.done_m = h_w + 16;
     pa.rows_m = h_rows; pa.n_expert = 512; pa.k = 10; pa.n_embd = N; pa.n_ff = kFf; pa.steps = 1; pa.scratch = scr;
     pa.arrive = arr; pa.diag_m = h_diag;
     pa.mix = d_mix; pa.mseq_m = h_w + 48; pa.mdone_m = h_w + 52; pa.mxq_m = h_xq; pa.mxq = mxq;
     pa.mx_m = h_x; pa.mixl = d_m; pa.part_m = h_part; pa.stamps_m = h_st;
-    if (!dec_moe_peer_launch(pa, dec_moe_peer_blocks(false), s, false)) {
+    PeerWatch watch(h_w, h_st, h_diag, arr);
+    watch.start();
+    if (!dec_moe_peer_launch(pa, dec_moe_peer_blocks(false, true), s, false)) {
         std::printf("    peer item: no launch\n");
         ok = false;
     }
     CK(cudaStreamSynchronize(s));
+    watch.stop();
     const std::string dg = dec_moe_peer_diag(h_diag);
     if (!dg.empty() || h_w[52] != 1u) {
         std::printf("    peer item: done %u %s\n", h_w[52], dg.c_str());
@@ -409,9 +462,10 @@ std::vector<float> run_peer_item(const Card& k, int T, cudaStream_t s, bool& ok,
     std::vector<float> part(h_part, h_part + (size_t) T * N);
     yq_out = down((const uint8_t*) yq, (size_t) T * (k.zv / 32) * Q81);
     for (void* q : {(void*) qkv, (void*) z, (void*) h, (void*) ga, (void*) be, (void*) o, (void*) x, yq, mxq, scr,
-                    (void*) arr, (void*) d_m, (void*) d_mix})
+                    (void*) d_m, (void*) d_mix})
         CK(cudaFree(q));
-    for (void* q : {(void*) h_xq, (void*) h_x, (void*) h_part, (void*) h_w, (void*) h_diag, (void*) h_ring, (void*) h_rows, (void*) h_st})
+    for (void* q : {(void*) h_xq, (void*) h_x, (void*) h_part, (void*) h_w, (void*) h_diag, (void*) h_ring, (void*) h_rows, (void*) h_st,
+                    (void*) arr})
         CK(cudaFreeHost(q));
     return part;
 }
@@ -476,6 +530,7 @@ bool parity() {
             CK(cudaSetDevice(g_dev1));
             CK(cudaStreamCreateWithFlags(&s1, cudaStreamNonBlocking));
             for (int T : {1, 2, 3, 5, 8}) {
+                std::printf("case formats=%d/%d/%d share=%d/8 T=%d\n", cb[0], cb[1], cb[2], peer8, T);
                 CK(cudaSetDevice(0));
                 clear_card(whole, s0); clear_card(k0, s0);
                 run_card(whole, T, s0);
@@ -497,6 +552,7 @@ bool parity() {
                 const std::vector<double> ref = cpu_out(L, wyq, T);
                 bool item_ok = true;
                 std::vector<uint8_t> pyq;
+                std::printf("  projections, head maps, and CPU reference complete; entering peer item\n");
                 const std::vector<float> pi = run_peer_item(k1, T, s1, item_ok, pyq);
                 // the item's q8_1 activations against the slice kernels': its projections sum in another order, so a
                 // value at a rounding tie may land one step away
@@ -630,16 +686,19 @@ void bench(int ndev) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    std::setvbuf(stdout, nullptr, _IOLBF, 0);
     int ndev = 0;
     CK(cudaGetDeviceCount(&ndev));
     cudaDeviceProp p{};
     CK(cudaGetDeviceProperties(&p, 0));
-    if (p.major < 9) {
-        std::printf("gdn_head_split_parity: needs thread-block clusters (compute capability %d.%d)\n", p.major, p.minor);
+    if (!basalt::cuda_target::supports(p.major, p.minor)) {
+        std::printf("gdn_head_split_parity: needs compute capability 8.9 (got %d.%d)\n", p.major, p.minor);
         return 77;
     }
     g_dev1 = ndev > 1 ? 1 : 0;
     std::printf("gdn_head_split_parity: rank 0 on card 0, the peer on card %d (%d cards)\n", g_dev1, ndev);
+    std::printf("gdn_head_split_parity: peer window %d blocks, %d with the mixer\n", dec_moe_peer_blocks(false),
+                dec_moe_peer_blocks(false, true));
     const std::string mode = argc > 1 ? argv[1] : "";
     const bool ok = parity();
     std::printf("gdn_head_split_parity: %s\n", ok ? "PASS" : "FAIL");
