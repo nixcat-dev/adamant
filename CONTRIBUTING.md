@@ -1,10 +1,10 @@
-# Contributing to Basalt
+# Contributing to Adamant
 
-Basalt is a single-purpose engine: Qwen3.8-Flash-Next on Linux with NVIDIA Blackwell GPUs. Every rule below exists to keep it fast and correct on that one target.
+Adamant targets Qwen3.8-Flash-Next on NVIDIA Ada GPUs. Ada support is under development; the inherited Blackwell implementation is not evidence of Ada correctness or performance. The [parity, quality and benchmark rules](#what-every-change-must-include) below define what a change needs, and [Ada execution and validation](docs/precision/ada.md) records the paths still to be measured.
 
 ## Scope
 
-- **CUDA on Blackwell (sm_120) only.** No ROCm/HIP, no AMD, no Intel/SYCL/oneAPI, no Apple/Metal, no CPU-only main path (a CPU fallback is fine where the GPU path is the default, like the experts held in RAM or `--vision cpu`), and no older NVIDIA architectures (Hopper sm_90 and earlier). No compatibility layers or `#if` branches for them. Pull requests adding another backend or architecture will be closed.
+- **CUDA on Ada (sm_89) only.** No ROCm/HIP, AMD, Intel/SYCL/oneAPI, Apple/Metal, or CPU-only main path (CPU experts held in RAM and `--vision cpu` remain supported). No multi-architecture compatibility layer. Unsupported instructions must be replaced with validated Ada implementations, not hidden behind launchable empty kernels or trap stubs. Preserve model-format coverage unless a scope change is explicitly approved.
 - **Linux and Windows x64 are both supported; Linux is where we test.** CI compiles and CPU-tests Windows on every pull request. Windows runs with the same GPU roles as Linux (main card plus expert tiers), with no performance claims, and the Windows limitations are in `docs/platforms.md`. Changes must not remove the platform seams (`src/platform/`, CMake `if(WIN32)`). Windows-only issues get a `windows` label. Headline benchmark numbers stay with the maintainer's Linux runs.
 - **Engine code is platform-neutral.** Outside `src/platform/` and `include/basalt/platform/` there is no `_WIN32`, `_MSC_VER`, `__linux__`, `<windows.h>`, `<sys/mman.h>`, `<unistd.h>` or raw OS call (mmap, madvise, pread, pthread/affinity, fork/exec/pipe, dlopen, /proc or /sys reads). Call the platform layer; when a seam is missing, add it there with a Linux body and a Windows body, the Linux body being the code you would have written anyway, and a test in `tests/platform/` that runs on both. Paths are UTF-8 and go through the platform file calls. `tools/check_platform_boundary.sh` enforces this.
 - **Engine log lines carry their level.** A line to stderr goes through `include/basalt/log.hpp` (`basalt::log::info`, `warn` or `error`), which writes `basalt <area>: [warning: |error: ]<text>`; the server and the terminal read the level from that marker and never from the words. A warning is a fallback or a lost function, an error is a failure or a refusal, everything else is info. `tools/check_stderr_logging.sh` fails when engine code names stderr anywhere else.
@@ -20,7 +20,7 @@ Basalt is a single-purpose engine: Qwen3.8-Flash-Next on Linux with NVIDIA Black
    - Bitwise-identical output: show the greedy-identity check against the previous build. Pin the expert tiers, since changes in GPU module size move the auto-sized tiers and change rounding.
    - Changed numerics (new reduction order, precision, quantization): run the perplexity/KLD gate against the Q8_0 reference through the decode path. Report PPL, mean KLD and top-1 agreement next to the previous build's. Large changes need the full 100-chunk run, not just the 20-chunk quick gate.
 4. **Benchmark hygiene:**
-   - Every performance number states the GPU power limit it was measured at; the standard is 400 W.
+   - Every performance number states the enforced GPU power limit. Match it between A/B runs; do not silently apply the upstream 400 W convention to a different machine.
    - A/B comparisons alternate the two builds in the same session. Numbers taken in different sessions drift and aren't comparable.
    - Keep warm-up and fixture order as `basalt-bench` defines them.
 
@@ -28,7 +28,7 @@ Basalt is a single-purpose engine: Qwen3.8-Flash-Next on Linux with NVIDIA Black
 
 - Kernels are written as `__device__` stage functions that take their block/warp index as an argument, with thin `__global__` wrappers, so they can be fused into persistent kernels later.
 - Comments are brief and stateless: what the code does and why. No hardware names, measured numbers, dates or history in comments. Those belong in the commit message or the PR.
-- Never use `cp.async.bulk.shared::cluster`. Use `cp.async.bulk.tensor.*.shared::cta` for TMA.
+- Do not use TMA, distributed shared memory, thread-block clusters, programmatic dependent launch, or native FP4 instructions: the target does not support them.
 - Keep adapted third-party code's license headers intact (ggml/llama.cpp is MIT).
 
 ## Commits and pull requests
@@ -47,7 +47,7 @@ Basalt is a single-purpose engine: Qwen3.8-Flash-Next on Linux with NVIDIA Black
   3. Commit it.
   4. Open a pull request; the `pages` workflow runs the same check.
   5. Once merged, the row appears on the runs page.
-- Any Blackwell (sm_120) machine with spare hours helps; bigger setups help most: 96 GB+ VRAM (single large cards or multi-GPU), quad- or octa-channel DDR5.
+- Ada (sm_89) machines with spare GPU time help validate the port; multi-card systems also cover peer expert execution.
 - A few hours of remote access to a machine speeds up development.
 - Or sponsor the project through GitHub Sponsors (the repository's Sponsor button): it pays for tokens for agentic development and for time on different hardware to test on.
 

@@ -1,4 +1,6 @@
 build*/
+!tools/build/
+!tools/build/**
 /bin/
 pack/
 logs/
@@ -14,7 +16,3 @@ __pycache__/
 /mtp/
 /.ccache/
 .DS_Store
-
-# Local working notes for the Windows port: scratch planning, not project docs.
-docs/WINDOWS-ROADMAP.md
-docs/REBASE-PLAN.md

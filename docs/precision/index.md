@@ -1,7 +1,15 @@
 # Precision and quality
 
-This page shows what precision Basalt computes in, that speculative decoding (MTP) does not change its output, and how
-its quality compares with llama.cpp on the same GGUFs against the same Q8_0 reference.
+**Adamant:** see [Ada execution and validation](ada.md) for the port's current
+paths and their validation state. The page below is inherited Basalt material;
+Adamant's own measurements are in the [README](../../README.md#measured-on-ada).
+
+## Inherited Basalt reference
+
+The descriptions, source citations, and measurements below describe upstream
+Basalt on Blackwell, not the current Adamant implementation. They are retained
+as reference evidence, not as Adamant results. In particular, native FP4 prompt
+execution and the persistent GDN middle described below are not Adamant paths.
 
 Test setup: one RTX 5090 at a 400 W power limit, an RTX 5060 Ti as the peer expert tier, 128 GB of system RAM
 (121 GiB visible to the OS). Each section names the build it measured.

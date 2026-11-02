@@ -1,6 +1,6 @@
 # Platforms
 
-Basalt runs natively on Linux x64 and Windows x64, on NVIDIA Blackwell (sm_120). Linux is where
+Adamant runs natively on Linux x64 and Windows x64, on NVIDIA Ada Lovelace (sm_89). Linux is where
 the engine is tested and benchmarked. CI builds both and runs the CPU tests on each. The GPU
 tests and the quality gate run on a machine with a card.
 
@@ -13,7 +13,7 @@ tests and the quality gate run on a machine with a card.
 | CUDA | 13 | 13 |
 | Build | CMake 3.24+ | CMake 3.24+ and Ninja |
 | Python | 3.10+ | 3.10+ |
-| GPU | NVIDIA Blackwell (sm_120); optional second GPU as a peer expert tier (`gpu 0,1`) | NVIDIA Blackwell (sm_120); optional second GPU as a peer expert tier (`gpu 0,1`) |
+| GPU | NVIDIA Ada Lovelace (sm_89); optional second GPU as a peer expert tier (`gpu 0,1`) | NVIDIA Ada Lovelace (sm_89); optional second GPU as a peer expert tier (`gpu 0,1`) |
 
 ## Platform code
 

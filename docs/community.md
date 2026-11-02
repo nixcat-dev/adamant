@@ -1,10 +1,10 @@
 # Community runs
 
-[jesdga95.github.io/basalt](https://jesdga95.github.io/basalt/) lists benchmark runs submitted by users, all taken with the same preset so the rows compare. The data is `docs/community/benchmarks.json`.
+Benchmark runs submitted by users, all taken with the same preset so the rows compare, live in `docs/community/benchmarks.json`. The rows currently in that file are Basalt's Blackwell runs, inherited with the fork; Adamant has no published page of its own yet.
 
 ## Add your run
 
-1. Stop any running Basalt server (the GPUs must be free), then run `basalt-bench --community`. It starts its own engine (three times, once per measurement), shows the load progress on stderr while each one starts, adds its row to `docs/community/benchmarks.json` and prints it. It uses every visible Blackwell GPU: a second card is the peer, and `CUDA_VISIBLE_DEVICES=0` gives a single-card row.
+1. Stop any running Basalt server (the GPUs must be free), then run `basalt-bench --community`. It starts its own engine (three times, once per measurement), shows the load progress on stderr while each one starts, adds its row to `docs/community/benchmarks.json` and prints it. It uses every visible Ada GPU: a second card becomes the peer, and `CUDA_VISIBLE_DEVICES=0` gives a single-card row.
 2. `--submitter NAME` is required: the name you want shown (one name with no spaces, up to 40 characters; it is not verified). `notes` (up to 200 characters) is optional and added by hand.
 3. Review the row in `docs/community/benchmarks.json`, commit it and open a pull request. If the bench could not write the file, it prints the row and says where to paste it.
 

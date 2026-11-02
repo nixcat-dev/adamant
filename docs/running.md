@@ -258,9 +258,9 @@ works, whether or not it runs the engine, and the startup line names it.
 ```
 
 A GPU number uses the sidecar, which the main build also produces (`tools/vision` builds on its own too). The server
-looks for it next to `bin/basalt` and only needs the named card to exist: the sm_120 rule is the engine's, not the
+looks for it next to `bin/basalt` and only needs the named card to exist: the sm_89 rule is the engine's, not the
 sidecar's. A sidecar is built for one card at configure time (`-DCMAKE_CUDA_ARCHITECTURES=<cc>`); on another it fails
-at startup with CUDA's own error, which the server shows. Sidecars on non-Blackwell cards are community-tested.
+at startup with CUDA's own error, which the server shows. Sidecars on cards other than the target are community-tested.
 `dynamic` needs no sidecar.
 
 The image encoder is Basalt's own, written for this model's vision tower (no llama.cpp or ggml): bf16 tensor-core
