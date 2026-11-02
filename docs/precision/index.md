@@ -26,8 +26,11 @@ Test setup: one RTX 5090 at a 400 W power limit, an RTX 5060 Ti as the peer expe
 - **Quantized once, never twice.** GGUF packs keep the GGUF blocks as shipped. The NVIDIA NVFP4 pack keeps NVIDIA's
   NVFP4 expert blobs bit for bit and quantizes each dense tensor once from NVIDIA's BF16: Q6_K for the projections
   ([details](features.md#6-bit-dense-projections-nvidia-nvfp4-pack)), Q8_0 for the head, token embedding and shared-expert down. Its
-  n-gram table is NVIDIA's FP8 values re-blocked to Q8_0 (one more rounding). Decode also reads the hyper-connection
-  matrices from an int8 copy (one fp16 scale per 32 inputs), and a Q6_K output head is screened through a 2-bit copy in
+  n-gram table is NVIDIA's FP8 values re-blocked to Q8_0 (one more rounding). A GGUF pack's table is instead the IQ4_NL
+  the download ships, unless `--ple-gguf` points at another GGUF: a separate Q8_0 table then serves the gather, so the
+  rows the engine reads are 8-bit rather than 4.5-bit while the rows of the pack are not read at all. Decode also reads
+  the hyper-connection matrices from an int8 copy (one fp16 scale per 32 inputs), and a Q6_K output head is screened
+  through a 2-bit copy in
   verify: the rows near the top are the exact Q6_K logits, the far tail keeps the copy's approximate logits
   ([details](two-stage-head.md#q6_k-head-approximate-tail)). A Q8_0 head is screened on the top six bits of its own
   codes with a proven bound: every consumer reads the exact head's values ([details](two-stage-head.md#q8_0-head-bit-planes-exact)).

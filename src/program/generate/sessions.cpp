@@ -193,7 +193,7 @@ int sessions(Context& context) {
             return 1;
         }
         basalt::log::info("basalt generate", "PLE on, table %llu rows of %s",
-                     (unsigned long long) ple_table.rows(), o.model.c_str());
+                     (unsigned long long) ple_table.rows(), (o.ple_gguf.empty() ? o.model : o.ple_gguf).c_str());
     }
     for (size_t i = 0; i < stages.size(); ++i) {
         GpuStage& st = *stages[i];

@@ -36,7 +36,7 @@ int vision(Context& context) {
             pio.keepalive_window_s = 60.0;
             if (pio.mode != basalt::kernels::PleIo::Direct) pio.keepalive_ms = 0;
         }
-        if (!ple_table.open(o.model, err, pio)) {
+        if (!ple_table.open(o.ple_gguf.empty() ? o.model : o.ple_gguf, err, pio)) {
             return fatal_start_error(err);
         }
         if (pio.mode == basalt::kernels::PleIo::Direct) {

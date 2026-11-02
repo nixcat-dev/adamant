@@ -37,6 +37,8 @@ struct Options {
     double yarn_beta_slow = 1.0;        ///< --yarn-beta-slow F
     /// The files the source tensors are read from: the model file, which serves them as a GGUF.
     std::vector<std::string> native_shards;
+    /// The GGUF that carries the n-gram (PLE) table: empty reads it from the model file, which otherwise serves it.
+    std::string ple_gguf;
     /// How the n-gram table is read.  Direct (default) = unbuffered SSD reads, table never in RAM.
     std::string ple_io = "direct";
     int64_t ple_row_cache = 1 << 20;   ///< bounded row cache (rows of 90 B); 0 disables

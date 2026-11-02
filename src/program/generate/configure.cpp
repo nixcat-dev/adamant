@@ -195,14 +195,15 @@ int run(int argc, char** argv) {
     basalt::core::layer_set_shared_early(true);
     {
         // the source tensors hold the PLE table
+        const std::string ple_src = o.ple_gguf.empty() ? o.model : o.ple_gguf;
         try {
-            const basalt::GgufModel model(o.native_shards);
+            const basalt::GgufModel model(o.ple_gguf.empty() ? o.native_shards : std::vector<std::string>{ple_src});
             if (model.find("per_layer_token_embd.weight") == nullptr) {
-                basalt::log::error("basalt generate", "%s has no per_layer_token_embd.weight", o.model.c_str());
+                basalt::log::error("basalt generate", "%s has no per_layer_token_embd.weight", ple_src.c_str());
                 return 2;
             }
         } catch (const std::exception& e) {
-            basalt::log::error("basalt generate", "%s: %s", o.model.c_str(), e.what());
+            basalt::log::error("basalt generate", "%s: %s", ple_src.c_str(), e.what());
             return 2;
         }
     }
