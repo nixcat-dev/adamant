@@ -237,8 +237,10 @@ bool Tokenizer::merge_piece(const uint8_t* p, size_t n, std::vector<int32_t>& ou
             if (best_rank == kNone) break;
             uint32_t r;
             sym_[best] = find_merge(sym_[best], sym_[best + 1], r);
-            std::memmove(&sym_[best + 1], &sym_[best + 2], (count - best - 2) * sizeof(int32_t));
-            std::memmove(&rank_[best], &rank_[best + 1], (count - best - 1) * sizeof(uint32_t));
+            // the pair merged away is the LAST one when `best == count - 2`, which makes both sources one-past-the-
+            // end: a valid pointer to form through `data()`, and a zero-length copy.  Indexing them would not be.
+            std::memmove(sym_.data() + best + 1, sym_.data() + best + 2, (count - best - 2) * sizeof(int32_t));
+            std::memmove(rank_.data() + best, rank_.data() + best + 1, (count - best - 1) * sizeof(uint32_t));
             --count;
             if (best + 1 < count) rank_[best] = find_merge(sym_[best], sym_[best + 1], r) >= 0 ? r : kNone;
             else rank_[best] = kNone;
