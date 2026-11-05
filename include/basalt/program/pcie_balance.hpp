@@ -12,9 +12,20 @@
 
 namespace basalt::program {
 
+/// Pool cost factor used to choose the GPU share of missed experts.
+inline double pcie_pool_factor(double pool_gbps) {
+    if (pool_gbps >= 30.0) return 1.85;
+    if (pool_gbps <= 12.0) return 0.8;
+    return 0.8 + (pool_gbps - 12.0) * (1.05 / 18.0);
+}
+
+/// PCIe share rounded to 0.05 and bounded for the auto-balancer.
+inline double pcie_share_for(double link_gbps, double pool_gbps) {
+    const double raw = link_gbps / (link_gbps + pcie_pool_factor(pool_gbps) * pool_gbps);
+    return std::min(0.95, std::max(0.10, std::round(raw * 20.0) / 20.0));
+}
+
 struct PcieBalance {
-    /// The pool costs this much more per expert than the link's bytes do at the same rate.
-    static constexpr double kPoolFactor = 1.85;
     bool on = false;
     double link_gbps = 0.0, blob_bytes = 0.0;
     double mark_ms = 0.0;
@@ -47,7 +58,7 @@ struct PcieBalance {
         if (++updates >= 3) on = false;                          // three fits, then it stops
         if (!(tc > 1.0) || !(blob_bytes > 0.0) || !(link_gbps > 0.0)) return -1.0;
         const double r = blob_bytes / (tc * 1e-6) / 1e9;         // the pool's bytes a second
-        const double f = std::min(0.60, std::max(0.10, std::round(link_gbps / (link_gbps + kPoolFactor * r) * 20.0) / 20.0));
+        const double f = pcie_share_for(link_gbps, r);
         *tc_us = tc;
         *rate = r;
         return std::fabs(f - cur) < 0.025 ? -1.0 : f;
