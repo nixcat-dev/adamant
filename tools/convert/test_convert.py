@@ -452,6 +452,63 @@ class DrafterTest(unittest.TestCase):
         finally:
             t.tearDown()
 
+    def test_dense_graft_copies_pack_and_refuses_layout_or_size_mismatch(self):
+        t = ConvertTest("test_sections")
+        t.setUp()
+        try:
+            (t.t / "dv.bin").write_bytes(np.array([0, 1, 5], dtype="<i4").tobytes())
+            convert.convert(t.args(mtp_source=str(self.src), draft_vocab=str(t.t / "dv.bin")))
+            base = t.model()
+            index = t.t / "mtp.index"
+            index.write_bytes(base.read("mtp/dense.index"))
+            formatted = t.t / "mtp-formatted.txt"
+            formatted.write_text("\n".join("  " + "   ".join(line.split()) + "  " for line in reversed(index.read_text().splitlines())) + "\n")
+            dense = t.t / "lamina.bin"
+            original = base.read("mtp/dense")
+            tuned = bytes(x ^ 0x5A for x in original)
+            dense.write_bytes(tuned)
+            with self.assertRaises(SystemExit):
+                convert.graft_mtp_dense(type("A", (), {"sections_from": str(t.t / "out.basalt"), "mtp_dense": str(dense),
+                    "mtp_dense_index": str(index), "mtp_dense_sha256": hashlib.sha256(tuned).hexdigest(),
+                    "out": str(t.t / "out.basalt"), "force": True, "name": None})())
+            convert.graft_mtp_dense(type("A", (), {"sections_from": str(t.t / "out.basalt"), "mtp_dense": str(dense),
+                "mtp_dense_index": str(formatted), "mtp_dense_sha256": hashlib.sha256(tuned).hexdigest(),
+                "out": str(t.t / "graft.basalt"), "force": False, "name": None})())
+            graft = ModelFile(str(t.t / "graft.basalt"))
+            self.assertEqual(graft.read("mtp/dense"), tuned)
+            for name in base.names():
+                if name not in {"mtp/dense", "hc8", "meta"}:
+                    self.assertEqual(graft.read(name), base.read(name), name)
+            old_hc8, new_hc8 = H.read_table(base.read("hc8")), H.read_table(graft.read("hc8"))
+            self.assertEqual({n: v for n, v in old_hc8.items() if not n.startswith("mtp.")},
+                             {n: v for n, v in new_hc8.items() if not n.startswith("mtp.")})
+            self.assertEqual(json.loads(graft.read("meta"))["mtp"]["dense"]["sha256"], hashlib.sha256(tuned).hexdigest())
+            rows = index.read_text().splitlines()
+            at = next(i for i, line in enumerate(rows) if line.strip() and not line.lstrip().startswith("#"))
+            fields = rows[at].split()
+            fields[1] = "wrong_kind"
+            rows[at] = " ".join(fields)
+            index.write_text("\n".join(rows) + "\n")
+            with self.assertRaises(SystemExit):
+                convert.graft_mtp_dense(type("A", (), {"sections_from": str(t.t / "out.basalt"), "mtp_dense": str(dense),
+                    "mtp_dense_index": str(index), "mtp_dense_sha256": hashlib.sha256(tuned).hexdigest(),
+                    "out": str(t.t / "bad.basalt"), "force": False, "name": None})())
+            index.write_bytes(base.read("mtp/dense.index"))
+            with self.assertRaises(SystemExit):
+                convert.graft_mtp_dense(type("A", (), {"sections_from": str(t.t / "out.basalt"), "mtp_dense": str(dense),
+                    "mtp_dense_index": str(index), "mtp_dense_sha256": "0" * 64,
+                    "out": str(t.t / "wrong-hash.basalt"), "force": False, "name": None})())
+            dense.write_bytes(tuned[:-1])
+            with self.assertRaises(SystemExit):
+                convert.graft_mtp_dense(type("A", (), {"sections_from": str(t.t / "out.basalt"), "mtp_dense": str(dense),
+                    "mtp_dense_index": str(index), "mtp_dense_sha256": hashlib.sha256(tuned).hexdigest(),
+                    "out": str(t.t / "small.basalt"), "force": False, "name": None})())
+            self.assertFalse((t.t / "bad.basalt.partial").exists())
+            self.assertFalse((t.t / "wrong-hash.basalt.partial").exists())
+            self.assertFalse((t.t / "small.basalt.partial").exists())
+        finally:
+            t.tearDown()
+
 
 class PleFp8Test(unittest.TestCase):
     """The FP8 n-gram table as Q8_0 rows: every code decodes as the plain formula says, and the Q8_0 values stay
