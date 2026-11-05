@@ -93,6 +93,8 @@ are whichever of `IQ4_NL`, `Q5_0`, `Q8_0` or `BF16` the file has: 90 B, 110 B, 1
 | `--ppl-out` | serve | path | Where `ppl=` requests write their per-row lines. |
 | `ppl=K` | request key | chunk index | Score chunk K of `--ppl-base`, the rest of the chunk teacher-forced through verify windows. |
 | `ppl_t=T` | request key | tokens, 3 | The window width of a `ppl=` request. |
+| `ppl_score=0` | request key | integer, 1 | Run the same fixed-width teacher-forced windows without copying logits, scoring rows or writing them to `--ppl-out`. |
+| `ppl_force=1` | request key | integer, 0 | Use natural draft window selection and judge each window against the stored continuation. Emits that continuation unchanged; grammar and relaxed drafting do not alter replay. |
 
 The request keys go on a `GEN` line of the engine's stdin protocol, before the token ids.
 

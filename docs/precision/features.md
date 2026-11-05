@@ -260,3 +260,9 @@ int8 KV, `--spec 0`, 400 W + 180 W, share 0 (all GPU) against 1 (all CPU): PPL 2
 top-1 93.04% / 93.12%. The paired KLD difference is +0.0025 [-0.0005, +0.0055], inside the noise of this gate, so any
 share between them is bounded by that. `basalt-probe` may print a different share
 as a suggestion ([probe](../probe.md)); it never changes it on its own.
+
+## Fixed-text replay and MTP section graft
+
+`ppl_score=0` skips host logit copying and row scoring; it is a timing diagnostic, not a quality gate. `ppl_force=1` emits the reference continuation while retaining natural draft-window selection. Neither changes default scoring or decoding.
+
+An MTP dense-section graft preserves tensor formats and target weights, target HC8 values, vocabulary, and experts. It regenerates MTP-derived HC8 entries with the existing quantizer. Different MTP proposals can change speculative window geometry, where existing geometry-sensitive rounding may change the greedy trajectory even though target tensor bytes are unchanged. A short greedy comparison found an output difference and no speed gain for the tested Lamina pack; no BF16 PPL/KLD validation was run, so that asset is not validated as a production replacement.
