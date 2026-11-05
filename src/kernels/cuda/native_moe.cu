@@ -41,9 +41,10 @@ __global__ void combine(const float* __restrict__ parts, const float* __restrict
     parts += tk * k * n_embd; weights += tk * k; if (shared) shared += tk * n_embd; output += tk * n_embd;
     const int64_t col = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
     if (col >= n_embd) return;
-    float sum = parts[col] * weights[0];
+    float sum = parts[col] * weights[0];          // the first product, rounded
     for (int expert = 1; expert < k; ++expert) {
-        sum += parts[int64_t(expert) * n_embd + col] * weights[expert];
+        // one FMA per expert, in order: left to the compiler's contraction, a build may fuse a different product
+        sum = fmaf(parts[int64_t(expert) * n_embd + col], weights[expert], sum);
     }
     if (shared) sum += shared[col];
     output[col] = sum;
@@ -116,9 +117,10 @@ __global__ void dm_combine_kernel(const float* __restrict__ parts, const float* 
         if ((unsigned) kd <= 1u) return __fadd_rn(0.0f, parts[off]);   // CUDA0's own and its staged share
         return __ldcv(kd >= 2 ? peer_rows + off : cpu_rows + off);
     };
-    float sum = row(0) * weights[0];
+    float sum = row(0) * weights[0];            // the first product, rounded
     for (int expert = 1; expert < k; ++expert) {
-        sum += row(expert) * weights[expert];
+        // one FMA per expert, in order: left to the compiler's contraction, a build may fuse a different product
+        sum = fmaf(row(expert), weights[expert], sum);
     }
     if (shared) sum += sh_gate ? sh_mul(shared[tk * n_embd + col], sh_gate[tk]) : shared[tk * n_embd + col];
     output[tk * n_embd + col] = sum;
@@ -243,14 +245,16 @@ __global__ void dm_combine4_kernel(const float* __restrict__ parts, const float*
         }
         if (pmark && blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0) st_release_gpu(cpu_seen, ring);   // its rows are in
     }
-    float sx = v[0].x * w[0], sy = v[0].y * w[0], sz = v[0].z * w[0], sw = v[0].w * w[0];
+    float sx = v[0].x * w[0], sy = v[0].y * w[0], sz = v[0].z * w[0], sw = v[0].w * w[0];   // first products, rounded
 #pragma unroll
     for (int j = 1; j < KM; ++j) {
         if (j >= k) break;
-        sx += v[j].x * w[j];
-        sy += v[j].y * w[j];
-        sz += v[j].z * w[j];
-        sw += v[j].w * w[j];
+        // one FMA per expert, in order, as the one-column combine sums: left to the compiler's contraction, the
+        // two kernels may fuse different products
+        sx = fmaf(v[j].x, w[j], sx);
+        sy = fmaf(v[j].y, w[j], sy);
+        sz = fmaf(v[j].z, w[j], sz);
+        sw = fmaf(v[j].w, w[j], sw);
     }
     if (shared) { sx += h.x; sy += h.y; sz += h.z; sw += h.w; }
     *reinterpret_cast<float4*>(output + tk * n_embd + col) = make_float4(sx, sy, sz, sw);
