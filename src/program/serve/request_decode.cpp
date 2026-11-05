@@ -575,30 +575,47 @@ Flow Request::decode() {
         }
         std::fflush(stdout);
         ++runtime_.rounds;
-        {   // the PCIe share: fitted from what the pool actually costs per missed expert (opt-in, BASALT_PCIE_BALANCE=1)
+        {   // the PCIe share, fitted per layer from the pool's own cost there (opt-in, BASALT_PCIE_BALANCE=1)
+            const size_t L = (size_t) runtime_.g.n_layers;
             if (!runtime_.pcie_bal_init) {
                 const char* env = std::getenv("BASALT_PCIE_BALANCE");
+                const bool on = env != nullptr && std::strcmp(env, "1") == 0 && runtime_.o.pcie_probe_gbps > 0.0;
+                const int seed = std::max(0, std::min(256, (int) (runtime_.o.pcie_frac * 256.0 + 0.5)));
                 runtime_.pcie_bal_init = true;
-                runtime_.pcie_bal.on = env != nullptr && std::strcmp(env, "1") == 0 && runtime_.o.pcie_probe_gbps > 0.0;
-                runtime_.pcie_bal.link_gbps = runtime_.o.pcie_probe_gbps;
-                runtime_.pcie_bal.blob_bytes = (double) basalt::kernels::cpu::expert_layout().max_blob;
-                runtime_.pcie_bal_t0 = Clock::now();
-                runtime_.pcie_bal.mark(0.0, runtime_.drive.d.multi_misses);
-                if (runtime_.pcie_bal.on)
-                    basalt::log::info("basalt serve", "PCIe share: %.2f from the %.1f GB/s link; the pool's cost is "
-                                 "fitted over the first decode windows", runtime_.o.pcie_frac, runtime_.o.pcie_probe_gbps);
-            } else if (runtime_.pcie_bal.on) {
-                const double ms_run = std::chrono::duration<double, std::milli>(Clock::now() - runtime_.pcie_bal_t0).count();
-                double tc = 0.0, rate = 0.0;
-                const double f = runtime_.pcie_bal.window(ms_run, runtime_.drive.d.multi_misses, runtime_.o.pcie_frac,
-                                                          &tc, &rate);
-                if (f >= 0.0) {
-                    const double was = runtime_.o.pcie_frac;
-                    runtime_.o.pcie_frac = f;
-                    runtime_.drive.d.pcie_num = std::max(0, std::min(256, (int) (f * 256.0 + 0.5)));
-                    basalt::log::info("basalt serve", "PCIe share: %.2f from the pool's %.1f GB/s (%.1f us an expert) and "
-                                 "the %.1f GB/s link (was %.2f)", f, rate, tc, runtime_.pcie_bal.link_gbps, was);
+                runtime_.pcie_bal_layer.assign(L, basalt::program::PcieBalance{});
+                runtime_.pcie_bal_ms.assign(L, 0.0);
+                runtime_.pcie_bal_jobs.assign(L, 0);
+                runtime_.pcie_num_layer.assign(L, seed);
+                for (size_t l = 0; l < L; ++l) {
+                    runtime_.pcie_bal_layer[l].on = on;
+                    runtime_.pcie_bal_layer[l].link_gbps = runtime_.o.pcie_probe_gbps;
+                    runtime_.pcie_bal_layer[l].blob_bytes =
+                        (double) basalt::kernels::cpu::expert_layout().blob_bytes((int64_t) l);
+                    runtime_.pcie_bal_layer[l].mark(0.0, 0);
                 }
+                runtime_.drive.d.pcie_num_layer = runtime_.pcie_num_layer.data();
+                runtime_.ver.reset_layer_costs(L);
+                if (on)
+                    basalt::log::info("basalt serve", "PCIe share: %.2f seeded from the %.1f GB/s link, fitted per layer "
+                                 "over the first decode windows", runtime_.o.pcie_frac, runtime_.o.pcie_probe_gbps);
+            } else {
+                for (size_t l = 0; l < L; ++l) {
+                    const int64_t c = l < runtime_.ver.cpu_layer.size() ? runtime_.ver.cpu_layer[l] : 0;
+                    if (c <= 0) continue;
+                    runtime_.pcie_bal_ms[l] += runtime_.ver.ms_pool_layer[l];
+                    runtime_.pcie_bal_jobs[l] += c;
+                    double tc = 0.0, rate = 0.0;
+                    const double cur = (double) runtime_.pcie_num_layer[l] / 256.0;
+                    const double f = runtime_.pcie_bal_layer[l].window(runtime_.pcie_bal_ms[l], runtime_.pcie_bal_jobs[l],
+                                                                      cur, &tc, &rate);
+                    if (f >= 0.0) {
+                        runtime_.pcie_num_layer[l] = std::max(0, std::min(256, (int) (f * 256.0 + 0.5)));
+                        basalt::log::info("basalt serve", "PCIe share: layer %zu %.2f from the pool's %.1f GB/s (%.1f us "
+                                     "an expert) and the %.1f GB/s link (was %.2f)", l, f, rate, tc,
+                                     runtime_.pcie_bal_layer[l].link_gbps, cur);
+                    }
+                }
+                runtime_.ver.reset_layer_costs(L);
             }
         }
         const Clock::time_point tw2 = Clock::now();

@@ -388,6 +388,14 @@ public:
     GpuPlanSink* plan_sink() { return &sink_; }
 
     double ms_wait = 0, ms_pool = 0, ms_host = 0, ms_commit = 0;
+    /// Per layer: the pool's time and the CPU entries it computed in the windows since the last reset.
+    std::vector<double> ms_pool_layer;
+    std::vector<int64_t> cpu_layer;
+    void reset_layer_costs(size_t n_layers) {
+        if (ms_pool_layer.size() != n_layers) { ms_pool_layer.assign(n_layers, 0.0); cpu_layer.assign(n_layers, 0); }
+        std::fill(ms_pool_layer.begin(), ms_pool_layer.end(), 0.0);
+        std::fill(cpu_layer.begin(), cpu_layer.end(), 0);
+    }
     double ms_launch = 0;   ///< host time inside the window graph's launch
     int64_t windows = 0;
     /// --profile: GPU stage times of the windows since the last call (ms per window), as one line; empty when off.

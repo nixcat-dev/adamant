@@ -359,6 +359,9 @@ struct ExpertDispatch {
     /// missed experts (the last ones in routing order) are read by the GPU over PCIe.
     GpuPlanSink* plan = nullptr;
     int pcie_num = 0;
+    /// Per-layer shares, indexed by layer (`d.layers`); nullptr keeps `pcie_num` for every layer.  The PCIe balance
+    /// fits one per layer from the pool's own cost there, since layers differ in expert format and so in CPU cost.
+    const int* pcie_num_layer = nullptr;
     int64_t pcie_experts = 0;      ///< distinct experts the GPU read over PCIe in verify windows
     /// routed (token, expert) entries the GPU computed from outside its cache in verify windows: read over PCIe
     /// (the PCIe share, kind 1) or on another GPU (kind 2).  In neither cache_hits nor cache_refused.

@@ -337,9 +337,11 @@ private:
     std::vector<int32_t> prof_rank_start{};
     std::string line{};
     int64_t rounds{};
-    basalt::program::PcieBalance pcie_bal{};      // the PCIe share, fitted from the windows that ran
+    std::vector<basalt::program::PcieBalance> pcie_bal_layer{};   // the PCIe share of each layer, fitted on its own
+    std::vector<double> pcie_bal_ms{};                            // the pool's time per layer, cumulative
+    std::vector<int64_t> pcie_bal_jobs{};                         // the CPU entries per layer, cumulative
+    std::vector<int> pcie_num_layer{};                            // the share the window's plan reads, per layer
     bool pcie_bal_init{};
-    Clock::time_point pcie_bal_t0{};
     std::optional<basalt::spec::SuffixDrafter> sfx;
     std::optional<basalt::spec::DraftPolicy> policy;
     static constexpr int64_t kImagePad = 248056;   // qwen4exp.ple.image_token_id: the PLE hash reads it for image cells

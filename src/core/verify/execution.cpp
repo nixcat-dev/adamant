@@ -307,8 +307,18 @@ int Verifier::serve_poll(PoolMultiFn pool, void* user, std::string& err) {
             w.blob = nullptr;
             warm_pool_->idle_start(&warm_job, &w);
         }
+        const double ms_layer = ms_since(b);
         ms_wait += std::chrono::duration<double, std::milli>(b - a).count();
-        ms_pool += ms_since(b);
+        ms_pool += ms_layer;
+        if (l >= 0 && (size_t) l < ms_pool_layer.size()) {   // the PCIe balance reads these per layer
+            ms_pool_layer[(size_t) l] += ms_layer;
+            int64_t cpu_entries = 0;
+            if (dm_ != nullptr) {
+                const int32_t* kind = dm_->h_ring[k].kind;
+                for (int i = 0; i < n && kind != nullptr; ++i) cpu_entries += kind[i] < 0 ? 1 : 0;
+            } else cpu_entries += n;
+            cpu_layer[(size_t) l] += cpu_entries;
+        }
         ++fl_.k;
     }
     if (dm_ != nullptr && dm_->warm != nullptr) warm_pool_->idle_stop();
