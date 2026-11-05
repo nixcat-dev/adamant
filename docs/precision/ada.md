@@ -19,6 +19,7 @@ measurements in [index.md](index.md) and its linked pages are not Adamant result
 | Grouped expert launches | Ordered stream launches replace dependent launches | The existing fused SwiGLU/q8_1 arithmetic remains; validate ordering and exact output. |
 | Scalar CPU quantizers and activation parity references | Host compilation disables multiply-add contraction | Q8_K rounds its product to fp32 before integer rounding, matching explicit-rounding SIMD and GPU kernels. This can change scalar quantization compared with a compiler-contracted build; validate exact ties and tiny activations. |
 | Weight prefetch | Per-cache-line prefetch replaces bulk prefetch | No model arithmetic changes intended. Profile independently; no speed claim is made. |
+| Native GR RMSNorm weight prefetch | Loads independent gamma values during the input reduction for supported row widths; accumulation order is unchanged | Intended bitwise-neutral. `native_gr_norm_parity` compares the previous kernel and a double-precision CPU reference; GPU parity and timing remain pending. Technique follows NInfer Apache-2.0 commit `9954867a`; no source was copied. |
 
 ## Prompt memory and peer execution
 

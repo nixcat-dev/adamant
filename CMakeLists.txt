@@ -814,6 +814,13 @@ basalt_gpu_test(NAME native_grouped_parity COMMAND native_grouped_parity)
 # dec_moe_glue (plan built inside, gate/up pair kernel, SwiGLU, down) bitwise vs native_expert_grouped, every covered pair
 basalt_gpu_test(NAME native_grouped_parity_glue COMMAND native_grouped_parity --glue)
 set_tests_properties(native_grouped_parity_glue PROPERTIES TIMEOUT 300)
+
+# Weighted native GR RMSNorm against the frozen kernel and a double-precision CPU reference.
+add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cpp)
+target_include_directories(native_gr_norm_parity PRIVATE ${_gpu_include_directories})
+target_link_libraries(native_gr_norm_parity PRIVATE kernels ${_gpu_runtime_target})
+basalt_gpu_test(NAME native_gr_norm_parity COMMAND native_gr_norm_parity)
+
 add_executable(shared_expert_parity tests/kernels/shared_expert_parity.cpp)
 target_include_directories(shared_expert_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(shared_expert_parity PRIVATE kernels ${_gpu_runtime_target})
