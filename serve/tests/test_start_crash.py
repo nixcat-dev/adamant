@@ -68,7 +68,8 @@ class StartCrash(unittest.TestCase):
                     eng.restart(tries=3)
             self.assertIn("killed by signal 11", str(again.exception))
             self.assertEqual(len(spawns), 2)             # the start, and exactly one restart try
-            self.assertEqual(sleeps, [])                 # no retry waits: the crash was not retried
+            # the patch records every sleeping thread; only the restart waits answer here
+            self.assertEqual([s for s in sleeps if s == process.ProcessEngine.RESTART_RETRY_S], [])   # the crash was not retried
 
     def test_a_plain_exit_is_still_retried(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -79,7 +80,8 @@ class StartCrash(unittest.TestCase):
             with mock.patch.object(process.time, "sleep", sleeps.append):
                 with self.assertRaises(EngineStartError):
                     eng.restart(tries=3)
-            self.assertEqual(len(sleeps), 2)             # the two waits between the three tries
+            self.assertEqual([s for s in sleeps if s == process.ProcessEngine.RESTART_RETRY_S],
+                             [process.ProcessEngine.RESTART_RETRY_S] * 2)   # the two waits between the three tries
 
     def test_the_note_carries_the_cpu_features_after_an_illegal_instruction(self):
         from serve.engine.progress import start_exit_note

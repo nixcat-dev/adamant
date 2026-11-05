@@ -320,12 +320,17 @@ class ProcessEngine:
                 pass
             if timed_out:
                 reason = f"the engine did not report READY within {ENGINE_READY_S:.0f} s"
+                note = ""
             elif errors := start_errors(log, log_start):   # the engine's own reason
                 reason = "; ".join(dict.fromkeys(errors))
+                note = start_exit_note(self.proc.returncode) if engine_crashed(self.proc.returncode) else ""
             else:
-                reason = start_last_line(log, log_start) or "the engine exited before it was ready"
-            err = EngineStartError(reason + ("" if timed_out else start_exit_note(self.proc.returncode)) +
-                                   start_failure_hint(log, log_start), log)
+                own = start_last_line(log, log_start)
+                reason = own or "the engine exited before it was ready"
+                # the exit itself is the story only when the log stayed silent; a crash is always worth naming
+                note = "" if own and not engine_crashed(self.proc.returncode) else \
+                    start_exit_note(self.proc.returncode)
+            err = EngineStartError(reason + note + start_failure_hint(log, log_start), log)
             if not timed_out:                              # timed_out: the kill is ours, not the system's end
                 err.exit_words = engine_exit_words(self.proc.returncode)
                 err.crashed = engine_crashed(self.proc.returncode)
