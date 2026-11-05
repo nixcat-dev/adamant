@@ -225,8 +225,10 @@ Flow Request::decode() {
                     const bool pre = early && runtime_.xq_stage == 0;
                     if (pre) runtime_.rank_swaps(ranked, runtime_.xq_across);
                     const double ms_pre = ms(ta);
-                    basalt::core::SpinWait wait;
-                    while (early && adapt_go.load(std::memory_order_acquire) == 0) wait.pause();
+                    for (unsigned spins = 0; early && adapt_go.load(std::memory_order_acquire) == 0; ++spins) {
+                        if (spins < 20000) basalt::platform::cpu_relax();
+                        else std::this_thread::yield();
+                    }
                     if (early && adapt_go.load(std::memory_order_acquire) != 1) return;
                     const auto tb = Clock::now();
                     adapt_ok = runtime_.xq_stage != 0 ? runtime_.xq_advance(false) : runtime_.xq_round(pre ? &ranked : nullptr);
