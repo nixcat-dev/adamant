@@ -575,10 +575,10 @@ Flow Request::decode() {
         }
         std::fflush(stdout);
         ++runtime_.rounds;
-        {   // the PCIe share, fitted per layer from the pool's own cost there (opt-in, BASALT_PCIE_BALANCE=1)
+        {   // the PCIe share, fitted per layer from the pool's own cost there (opt-in, ADAMANT_PCIE_BALANCE=1)
             const size_t L = (size_t) runtime_.g.n_layers;
             if (!runtime_.pcie_bal_init) {
-                const char* env = std::getenv("BASALT_PCIE_BALANCE");
+                const char* env = std::getenv("ADAMANT_PCIE_BALANCE");
                 const bool on = env != nullptr && std::strcmp(env, "1") == 0 && runtime_.o.pcie_probe_gbps > 0.0;
                 const int seed = std::max(0, std::min(256, (int) (runtime_.o.pcie_frac * 256.0 + 0.5)));
                 runtime_.pcie_bal_init = true;
