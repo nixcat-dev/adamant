@@ -816,7 +816,7 @@ basalt_gpu_test(NAME native_grouped_parity_glue COMMAND native_grouped_parity --
 set_tests_properties(native_grouped_parity_glue PROPERTIES TIMEOUT 300)
 
 # Weighted native GR RMSNorm against the frozen kernel and a double-precision CPU reference.
-add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cpp)
+add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cu)
 target_include_directories(native_gr_norm_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(native_gr_norm_parity PRIVATE kernels ${_gpu_runtime_target})
 basalt_gpu_test(NAME native_gr_norm_parity COMMAND native_gr_norm_parity)
