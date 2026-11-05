@@ -46,7 +46,8 @@ inline constexpr uint64_t PLE_TABLE_ROWS = 320001536ull;
 inline constexpr int PLE_ROW_BYTES = (PLE_HEAD_DIM / 32) * 18;           // 90: an IQ4_NL row
 inline constexpr int PLE_ROW_BYTES_Q5_0 = (PLE_HEAD_DIM / 32) * 22;       // 110: a Q5_0 row
 inline constexpr int PLE_ROW_BYTES_Q8_0 = (PLE_HEAD_DIM / 32) * 34;       // 170: a Q8_0 row
-inline constexpr int PLE_ROW_BYTES_MAX = PLE_ROW_BYTES_Q8_0;
+inline constexpr int PLE_ROW_BYTES_BF16 = PLE_HEAD_DIM * 2;               // 320: a BF16 row, two bytes a value
+inline constexpr int PLE_ROW_BYTES_MAX = PLE_ROW_BYTES_BF16;
 
 /// The artifact's own hash constants, transcribed from the GGUF metadata:
 ///
@@ -97,6 +98,11 @@ int iq4nl_code(int code);
 /// so byte j carries elements j and j+16 - NOT 2j and 2j+1, which is the natural reading and which produces
 /// a perfectly plausible embedding of the wrong 160 values.
 void iq4nl_dequant_row(const uint8_t* row, float* out160);
+
+/// One 320-byte BF16 row -> 160 floats.  bf16 is the top half of an f32, so widening is exact for every value,
+/// normal or not: no codebook, no scale, no rounding to get wrong.  Each pair of bytes is assembled little-endian
+/// rather than reinterpreted, so the host's own byte order does not enter it.
+void bf16_dequant_row(const uint8_t* row, float* out160);
 
 /// How the table's rows are read. `Direct` is the default: 4 KiB reads from the SSD (platform::DirectFile),
 /// so the table never occupies the process's memory. `Mmap` is the earlier memory-mapped path, kept as the
@@ -173,7 +179,7 @@ public:
     /// True when `PleIoOptions::lock` was asked for and the whole table was locked (false: pages only pre-touched).
     bool locked() const;
     uint64_t rows() const;
-    /// "IQ4_NL" or "Q5_0".
+    /// "IQ4_NL", "Q5_0", "Q8_0" or "BF16".
     const char* format() const;
 
     /// 16 row indices -> 2560 floats.  The gathered rows are flattened HEAD-SLOWEST: row h's 160 values

@@ -28,7 +28,9 @@ Test setup: one RTX 5090 at a 400 W power limit, an RTX 5060 Ti as the peer expe
   ([details](features.md#6-bit-dense-projections-nvidia-nvfp4-pack)), Q8_0 for the head, token embedding and shared-expert down. Its
   n-gram table is NVIDIA's FP8 values re-blocked to Q8_0 (one more rounding). A GGUF pack's table is instead the IQ4_NL
   the download ships, unless `--ple-gguf` points at another GGUF: a separate Q8_0 table then serves the gather, so the
-  rows the engine reads are 8-bit rather than 4.5-bit while the rows of the pack are not read at all. Decode also reads
+  rows the engine reads are 8-bit rather than 4.5-bit while the rows of the pack are not read at all. A Q5_0 or a BF16
+  table reads there too; a BF16 row widens to f32 exactly, so the gather is the checkpoint's own values with no table
+  rounding at all. Decode also reads
   the hyper-connection matrices from an int8 copy (one fp16 scale per 32 inputs), and a Q6_K output head is screened
   through a 2-bit copy in
   verify: the rows near the top are the exact Q6_K logits, the far tail keeps the copy's approximate logits

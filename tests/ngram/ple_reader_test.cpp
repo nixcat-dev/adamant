@@ -441,14 +441,15 @@ int main(int argc, char** argv) {
         else { std::fprintf(stderr, "usage: ple_reader_test --selftest [--dir D] | --gguf SHARD2 [--rows N] [--tokens F] [--stress SECS]\n"); return 2; }
     }
     if (self) {
-        // ng::ROW_BYTES (90, IQ4_NL, production default), 110 (Q5_0) and 170 (Q8_0) rows through the
-        // same generic row_bytes path -- see the comment on selftest().
+        // ng::ROW_BYTES (90, IQ4_NL, production default), 110 (Q5_0), 170 (Q8_0) and 320 (BF16) rows through
+        // the same generic row_bytes path -- see the comment on selftest().
         const int r90 = selftest(dir, ng::ROW_BYTES);
         const int r110 = selftest(dir, k::PLE_ROW_BYTES_Q5_0);
         const int r170 = selftest(dir, k::PLE_ROW_BYTES_Q8_0);
+        const int r320 = selftest(dir, k::PLE_ROW_BYTES_BF16);
         const int q8 = q8_decode_check();
         const int warm = warm_rows_check(dir);
-        return r90 != 0 ? r90 : r110 != 0 ? r110 : r170 != 0 ? r170 : q8 != 0 ? q8 : warm;
+        return r90 != 0 ? r90 : r110 != 0 ? r110 : r170 != 0 ? r170 : r320 != 0 ? r320 : q8 != 0 ? q8 : warm;
     }
     if (!gguf.empty()) return real(gguf, rows, tokens, inflight, direct_first, direct_only, stress_secs);
     std::fprintf(stderr, "nothing to do\n");

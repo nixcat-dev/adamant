@@ -62,7 +62,7 @@ All CLI, all off.
 
 The per-layer n-gram (PLE) table stays on disk and its rows are read as needed. It is read from the model file unless
 `--ple-gguf` names another GGUF that carries it, and either file may hold the table alone or among other tensors. Rows
-are whichever of `IQ4_NL`, `Q5_0` or `Q8_0` the file has: 90 B, 96 B or 170 B each.
+are whichever of `IQ4_NL`, `Q5_0`, `Q8_0` or `BF16` the file has: 90 B, 110 B, 170 B or 320 B each.
 
 | Flag | Binary | Value, default | What it does |
 | --- | --- | --- | --- |
