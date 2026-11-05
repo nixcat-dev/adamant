@@ -209,9 +209,18 @@ class Vision:
     def _encode_pinned(self, images: list[bytes], pins: list[str]) -> list[tuple[Path, int, int]]:
         return [self._encode_one(data, pins) for data in images]
 
+    def _ensure_dir(self):
+        """A temp cleaner removes the work folder now and then, also while the encoder is unloaded; it is made
+        again for the next encode, and the cached embeddings, gone with it, are encoded fresh."""
+        if not self.dir.is_dir():
+            self.dir.mkdir(parents=True, exist_ok=True)
+            self.cache.clear()
+            self.cache_bytes = 0
+
     def _encode_one(self, data: bytes, pins: list[str]) -> tuple[Path, int, int]:
         key = hashlib.sha256(data).hexdigest()[:32]
         with self.lock:
+            self._ensure_dir()
             self._pin(key, pins)
             if key in self.cache:
                 return self.cache[key]
