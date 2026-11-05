@@ -61,6 +61,9 @@ bool all_digits(const std::string& s);
 /// ("262k" is 262144).
 bool parse_depth(const std::string& s, long long& tokens);
 
+/// Creates or truncates a log file through the platform file seam before a child process is started.
+bool prepare_log_file(const std::string& path, std::string& err);
+
 /// FLAG VALUE: replace the value when the flag is there, else append both.
 void set_arg(std::vector<std::string>& args, const std::string& flag, const std::string& value);
 bool has_arg(const std::vector<std::string>& args, const std::string& flag);

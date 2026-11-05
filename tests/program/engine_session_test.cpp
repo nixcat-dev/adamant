@@ -45,6 +45,28 @@ int main(int argc, char** argv) {
     const std::string self = std::filesystem::absolute(argv[0]).string();
     const std::string dir = std::filesystem::temp_directory_path().string();
     {
+        const std::string log = (std::filesystem::path(dir) / "engine_session_test_preflight.log").string();
+        { std::ofstream f(log, std::ios::binary); f << "old log"; }
+        std::string err;
+        const bool ready = basalt::program::prepare_log_file(log, err);
+        check(ready && read_all(log).empty(), "log preflight truncates a writable file", err);
+        std::filesystem::remove(log);
+    }
+    {
+        const std::string parent = (std::filesystem::path(dir) / "engine_session_test_missing_parent").string();
+        std::filesystem::remove_all(parent);
+        const std::string log = (std::filesystem::path(parent) / "draft.log").string();
+        std::string err;
+        const bool ready = basalt::program::prepare_log_file(log, err);
+        check(!ready && err == "cannot write log file " + log,
+              "log preflight rejects a path without a writable parent", err);
+        basalt::program::Engine e;
+        err.clear();
+        const bool up = e.start(self, {"ok"}, log, err);
+        check(!up && err == "cannot write log file " + log,
+              "an unwritable engine log fails before starting a child", err);
+    }
+    {
         const std::string log = dir + "/engine_session_test_ok.log";
         basalt::program::Engine e;
         std::string err;
