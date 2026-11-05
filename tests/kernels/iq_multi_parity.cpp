@@ -372,11 +372,11 @@ void check_grouped(int gu, int dt, int64_t H, int64_t FF, cudaStream_t s, std::m
     // 0..11 entries per group: one pass, a partial pass, two passes and three passes of GRP_NC = 4
     Grouped G(gu, dt, H, FF, {1, 3, 4, 5, 0, 8, 2, 11, 1}, 8, rng);
     const auto a = G.result(true, s), b = G.result(false, s);
-    size_t diff = 0, written = 0;
+    size_t diff = 0;
     bool finite = true;
     for (size_t i = 0; i < a.size(); ++i) {
         diff += std::memcmp(&a[i], &b[i], 4) != 0;
-        if (i < (size_t) G.n_ent * H) { ++written; finite = finite && std::isfinite(b[i]); }
+        if (i < (size_t) G.n_ent * H) finite = finite && std::isfinite(b[i]);
     }
     const bool ok = diff == 0 && finite;
     std::printf("%-8s/%-7s %5lld x %4lld  native_expert_grouped, %d groups, %d entries: %s\n", name_of(gu),
