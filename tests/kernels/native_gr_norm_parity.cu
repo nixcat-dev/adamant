@@ -26,7 +26,7 @@ void check(cudaError_t error, const char* what) {
     }
 }
 
-__device__ float warp_sum(float value) {
+__device__ __forceinline__ float warp_sum(float value) {
 #pragma unroll
     for (int offset = 16; offset > 0; offset >>= 1)
         value += __shfl_xor_sync(0xffffffffu, value, offset, 32);
@@ -35,13 +35,17 @@ __device__ float warp_sum(float value) {
 
 // Frozen prefetch-free kernel used as the bitwise baseline.
 template<int BlockSize>
-__global__ void baseline_norm(const float* input, const float* gamma, float* output,
+__global__ void baseline_norm(const float* __restrict__ input, const float* __restrict__ gamma,
+                              float* __restrict__ output,
                               int n_cols, float epsilon) {
     const int tid = threadIdx.x;
     const std::size_t offset = std::size_t(blockIdx.x) * n_cols;
+    input += offset;
+    gamma += offset;
+    output += offset;
     float partial = 0.0f;
     for (int col = tid; col < n_cols; col += BlockSize) {
-        const float value = input[offset + col];
+        const float value = input[col];
         partial += value * value;
     }
     __shared__ float sums[32];
@@ -54,7 +58,7 @@ __global__ void baseline_norm(const float* input, const float* gamma, float* out
     partial = warp_sum(partial);
     const float scale = rsqrtf(partial / n_cols + epsilon);
     for (int col = tid; col < n_cols; col += BlockSize)
-        output[offset + col] = scale * input[offset + col] * gamma[offset + col];
+        output[col] = scale * input[col] * gamma[col];
 }
 
 void run_baseline(const float* x, const float* gamma, float* y, int cols, int rows, cudaStream_t stream) {

@@ -57,17 +57,12 @@ __global__ void weighted_rms_norm(const float* __restrict__ input,
 #pragma unroll
         for (int item = 0; item < PrefetchItems; ++item) {
             const int col = tid + item * BlockSize;
-            if (col < n_cols) {
-                const float value = input[col];
-                prefetched_gamma[item] = gamma[col];
-                partial += value * value;
-            }
+            if (col < n_cols) prefetched_gamma[item] = gamma[col];
         }
-    } else {
-        for (int col = tid; col < n_cols; col += BlockSize) {
-            const float value = input[col];
-            partial += value * value;
-        }
+    }
+    for (int col = tid; col < n_cols; col += BlockSize) {
+        const float value = input[col];
+        partial += value * value;
     }
 
     // Pinned block_reduce<SUM,BlockSize>: every warp repeats the final XOR

@@ -819,6 +819,7 @@ set_tests_properties(native_grouped_parity_glue PROPERTIES TIMEOUT 300)
 add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cu)
 target_include_directories(native_gr_norm_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(native_gr_norm_parity PRIVATE kernels ${_gpu_runtime_target})
+target_compile_options(native_gr_norm_parity PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 basalt_gpu_test(NAME native_gr_norm_parity COMMAND native_gr_norm_parity)
 
 add_executable(shared_expert_parity tests/kernels/shared_expert_parity.cpp)
