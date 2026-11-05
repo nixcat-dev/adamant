@@ -754,10 +754,24 @@ class OutputParser:
         self.lead = False
         self.rtail = ""              # last reasoning character sent
         self.schemas = {t.get("name"): t for t in tools or []}
+        # A call the model writes in code style (`tools.write`, `functions.write`, `default_api.write`) is the
+        # declared tool `write`: the prefix is not part of the name. An alias that matches several tools, or is
+        # itself declared, resolves to itself.
+        prefixed: dict[str, set] = {}
+        for declared in self.schemas:
+            if isinstance(declared, str) and declared:
+                for prefix in ("tools.", "functions.", "default_api."):
+                    prefixed.setdefault(prefix + declared, set()).add(declared)
+        self.aliases = {a: next(iter(names)) for a, names in prefixed.items()
+                        if len(names) == 1 and a not in self.schemas}
         # stream_tools: also report a call while it is written ("tool_start", "tool_args" pieces) before "tool_call"
         self.stream_tools = stream_tools
         self.fence, self.line, self.ticks = "", "", 0     # code fence, current line and backticks of the answer so far
         self._reset_scan()
+
+    def _resolve(self, name: str) -> str:
+        """The declared tool an emitted name stands for (a code-style prefix is not part of the name)."""
+        return self.aliases.get(name, name)
 
     def _track(self, text: str) -> str:
         """Follow the answer text that has gone out: the open code fence (``` or ~~~), the current line, and the
@@ -808,7 +822,7 @@ class OutputParser:
                 b = rest.find(">", a + 10) if a >= 0 else -1
                 if b < 0:
                     return out
-                name = rest[a + 10:b]
+                name = self._resolve(rest[a + 10:b])
                 self.scall = ToolCall(name=name, arguments={})
                 self.sdeclared = _tool_properties(self.schemas.get(name))
                 out.append(Event("tool_start", call=self.scall))
@@ -1002,8 +1016,9 @@ class OutputParser:
                     return out
                 body = self.buf[:i]
                 self.buf = self.buf[i + len(CALL_END):]
-                name = body.strip()[len("<function="):].split(">", 1)[0]
+                name = self._resolve(body.strip()[len("<function="):].split(">", 1)[0])
                 call = parse_tool_call(body, self.schemas.get(name))
+                call.name = name     # parse_tool_call reads the name from the text: the call carries the declared tool
                 if self.scall is not None:
                     call.id = self.scall.id
                 out.append(Event("tool_call", call=call))
