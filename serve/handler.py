@@ -32,6 +32,8 @@ from serve.util.text import stop_strings
 
 BODY_MAX = 256 << 20                        # the most a JSON request body may hold (read into memory)
 CONTROL_BODY_MAX = 64 << 10                 # the unused body of /load and /unload
+STREAM_WRITE_TIMEOUT_S = 60.0               # a stream write stuck with no progress this long is OSError: the client
+                                            # stopped reading; the request is cancelled (0: wait forever)
 
 
 class BadBody(Exception):
@@ -523,6 +525,11 @@ def make_handler(svc: Service):
             self.send_header("X-Accel-Buffering", "no")   # proxies pass each event at once
             self._cors()
             self.end_headers()
+            if STREAM_WRITE_TIMEOUT_S > 0:
+                try:
+                    self.connection.settimeout(STREAM_WRITE_TIMEOUT_S)
+                except OSError:
+                    pass
 
         def _unknown_model(self, path, name):
             """404 for a missing or unserved model, in the shape of the API called."""
