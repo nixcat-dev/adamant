@@ -32,6 +32,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -180,7 +181,7 @@ struct MmqBufs {
 // `direct`: no gathers - the products read the blobs where they are (a fixed stride apart, every expert with rows)
 void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const Routing& r, const float* x_dev,
              const int32_t* src_dev, const std::vector<const uint8_t*>& blob, int64_t rows, cudaStream_t s,
-             bool direct = false, size_t stride = 0) {
+             bool direct = false, size_t stride = 0, bool arithmetic_ids = false, bool grouped_gather = false) {
     const size_t gub = mmq::matrix_bytes(p.gu, 1280, N), db = mmq::matrix_bytes(p.d, N, FF);
     const int E = (int) r.cnt.size();
     std::vector<int32_t> order;
@@ -193,14 +194,28 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         for (size_t i = 0; i <= GROUP; ++i)
             bh[n + 1 + g * (GROUP + 1) + i] = bh[std::min(n, g * GROUP + i)] - bh[g * GROUP];
     ck(cudaMemcpyAsync(b.bounds.p, bh.data(), bh.size() * 4, cudaMemcpyHostToDevice, s), "bounds");
-    mmq::iota(b.ident.as<int32_t>(), rows, s);
+    if (!arithmetic_ids) mmq::iota(b.ident.as<int32_t>(), rows, s);
     mmq::quantize(x_dev, src_dev, b.xq.p, (int) p.gu, N, N, rows, s);
     for (size_t j = 0; j < n; ++j) {
         const size_t q = j % GROUP;
         const uint8_t* bl = blob[(size_t) order[j]];
-        if (!direct)
-            mmq::gather_native(bl, bl + geo.up_off, gub / 2, bl + geo.down_off, db, b.grp_gu.as<uint8_t>() + q * gub,
-                               b.grp_d.as<uint8_t>() + q * db, s);
+        if (!direct && grouped_gather && q == 0) {
+            mmq::GatherGroup group;
+            group.n = (int) std::min((size_t) GROUP, n - j);
+            for (int i = 0; i < group.n; ++i) group.blob[i] = blob[(size_t) order[j + (size_t) i]];
+            if (!mmq::gather_native_group(group, geo.up_off, gub / 2, geo.down_off, db,
+                    b.grp_gu.as<uint8_t>(), gub, b.grp_d.as<uint8_t>(), db, s)) {
+                for (int i = 0; i < group.n; ++i) {
+                    const uint8_t* src = group.blob[i];
+                    mmq::gather_native(src, src + geo.up_off, gub / 2, src + geo.down_off, db,
+                                       b.grp_gu.as<uint8_t>() + (size_t) i * gub,
+                                       b.grp_d.as<uint8_t>() + (size_t) i * db, s);
+                }
+            }
+        } else if (!direct && !grouped_gather) {
+            mmq::gather_native(bl, bl + geo.up_off, gub / 2, bl + geo.down_off, db,
+                               b.grp_gu.as<uint8_t>() + q * gub, b.grp_d.as<uint8_t>() + q * db, s);
+        }
         if (q + 1 < GROUP && j + 1 < n) continue;
         const size_t j0 = j - q, g = j0 / GROUP;
         const int ngx = (int) (q + 1);
@@ -215,7 +230,8 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         mmq::Product gu;
         gu.w = direct ? (const void*) b0 : b.grp_gu.p; gu.type = (int) p.gu; gu.w_rows = 1280; gu.w_cols = N;
         gu.expert_bytes = direct ? stride : gub;
-        gu.n = ngx; gu.xq = b.xq.p; gu.bounds = b.bounds.as<int32_t>() + j0; gu.ids = b.ident.as<int32_t>();
+        gu.n = ngx; gu.xq = b.xq.p; gu.bounds = b.bounds.as<int32_t>() + j0;
+        gu.ids = arithmetic_ids ? nullptr : b.ident.as<int32_t>();
         gu.total_rows = rows; gu.max_rows = maxr; gu.dst = b.gu.as<float>(); gu.ld_dst = 1280;
         ctx.run(gu, s);
         mmq::swiglu(b.gu.as<float>() + r0 * 1280, b.h.as<float>() + r0 * FF, nr, FF, false, s);
@@ -224,7 +240,8 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         dn.w = direct ? (const void*) (b0 + geo.down_off) : b.grp_d.p; dn.type = (int) p.d; dn.w_rows = N; dn.w_cols = FF;
         dn.expert_bytes = direct ? stride : db;
         dn.n = ngx; dn.xq = b.hq.p; dn.bounds = b.bounds.as<int32_t>() + n + 1 + g * (GROUP + 1);
-        dn.ids = b.ident.as<int32_t>(); dn.total_rows = nr; dn.max_rows = maxr; dn.dst = b.dm.as<float>() + r0 * N;
+        dn.ids = arithmetic_ids ? nullptr : b.ident.as<int32_t>();
+        dn.total_rows = nr; dn.max_rows = maxr; dn.dst = b.dm.as<float>() + r0 * N;
         dn.ld_dst = N;
         ctx.run(dn, s);
     }
@@ -337,6 +354,22 @@ void run_pair(const Pair& p, bool outliers, cudaStream_t s) {
     run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s);
     ck(cudaStreamSynchronize(s), "mmq");
     const std::vector<float> y_mmq = download(mb.dm, (size_t) rows * N);
+    run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+            false, 0, true);
+    ck(cudaStreamSynchronize(s), "mmq arithmetic scatter");
+    const std::vector<float> y_arithmetic = download(mb.dm, (size_t) rows * N);
+    if (y_mmq.size() != y_arithmetic.size() ||
+        std::memcmp(y_mmq.data(), y_arithmetic.data(), y_mmq.size() * sizeof(float)) != 0)
+        throw std::runtime_error(std::string(p.name) + ": arithmetic identity scatter differs from mapped output");
+    std::printf("  mapped vs arithmetic identity scatter: bitwise identical\n");
+    run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+            false, 0, false, true);
+    ck(cudaStreamSynchronize(s), "mmq grouped gather");
+    const std::vector<float> y_grouped = download(mb.dm, (size_t) rows * N);
+    if (y_mmq.size() != y_grouped.size() ||
+        std::memcmp(y_mmq.data(), y_grouped.data(), y_mmq.size() * sizeof(float)) != 0)
+        throw std::runtime_error(std::string(p.name) + ": grouped gather differs from per-expert gather");
+    std::printf("  per-expert vs grouped gather: bitwise identical\n");
 
     const bool f16 = has_f16(p);
     basalt::prefill::Gemm gemm;
@@ -474,7 +507,40 @@ template <typename F> double time_ms(F f, cudaStream_t s, int reps) {
     return v[v.size() / 2];
 }
 
-void bench_pair(const Pair& p, cudaStream_t s) {
+template <typename A, typename B> std::pair<double, double> time_alternating(A a_fn, B b_fn, cudaStream_t s, int reps) {
+    cudaEvent_t a{}, b{};
+    ck(cudaEventCreate(&a), "event");
+    ck(cudaEventCreate(&b), "event");
+    a_fn();
+    b_fn();
+    ck(cudaStreamSynchronize(s), "warm");
+    std::vector<double> a_ms, b_ms;
+    auto once = [&](auto& fn) {
+        ck(cudaEventRecord(a, s), "record");
+        fn();
+        ck(cudaEventRecord(b, s), "record");
+        ck(cudaEventSynchronize(b), "sync");
+        float ms = 0.0f;
+        ck(cudaEventElapsedTime(&ms, a, b), "elapsed");
+        return double(ms);
+    };
+    for (int i = 0; i < reps; ++i) {
+        if ((i & 1) == 0) {
+            a_ms.push_back(once(a_fn));
+            b_ms.push_back(once(b_fn));
+        } else {
+            b_ms.push_back(once(b_fn));
+            a_ms.push_back(once(a_fn));
+        }
+    }
+    cudaEventDestroy(b);
+    cudaEventDestroy(a);
+    std::sort(a_ms.begin(), a_ms.end());
+    std::sort(b_ms.begin(), b_ms.end());
+    return {a_ms[a_ms.size() / 2], b_ms[b_ms.size() / 2]};
+}
+
+void bench_pair(const Pair& p, cudaStream_t s, int power_limit_w) {
     constexpr int E = GROUP;
     const Geo geo(p);
     std::mt19937 rng(5 + (unsigned) p.gu);
@@ -495,8 +561,10 @@ void bench_pair(const Pair& p, cudaStream_t s) {
     mmq::Context ctx;
     const double flop_e = 2.0 * (1280.0 * N + (double) N * FF);   // per row
     const double wbytes = (double) mmq::matrix_bytes(p.gu, 1280, N) + (double) mmq::matrix_bytes(p.d, N, FF);
-    std::printf("%s: one group of %d experts (weights %.2f MB each)\n", p.name, E, wbytes / 1e6);
-    std::printf("  %5s  %12s  %12s  %12s  %8s  %10s  %10s\n", "rows", "FP16 us/exp", "MMQ us/exp", "MMQ-k us/exp",
+    std::printf("%s: one group of %d experts (weights %.2f MB each, power limit %d W)\n", p.name, E, wbytes / 1e6,
+                power_limit_w);
+    std::printf("  %5s  %12s  %12s  %12s  %12s  %12s  %8s  %10s  %10s\n", "rows", "FP16 us/exp", "MMQ us/exp",
+                "MMQ no-id", "MMQ grouped", "MMQ-k us/exp",
                 "speedup", "MMQ TFLOP/s", "FP16 TFLOP/s");
     for (int R : {64, 100, 150, 200, 300, 450, 600}) {
         const int T = R * E / K;   // each token on 10 of the 16 experts: every expert gets R rows
@@ -514,20 +582,33 @@ void bench_pair(const Pair& p, cudaStream_t s) {
         if (f16) upload_xs(x, r, fb);
         const int reps = 21;
         const double t_f16 = f16 ? time_ms([&] { run_f16(p, geo, gemm, fb, r, blob, s); }, s, reps) : 0.0;
-        const double t_mmq = time_ms([&] {
-            run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s);
-        }, s, reps);
+        const auto mmq_ab = time_alternating(
+            [&] { run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s); },
+            [&] { run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+                          false, 0, true); },
+            s, reps);
+        const double t_mmq = mmq_ab.first;
+        const double t_identity = mmq_ab.second;
+        const auto gather_ab = time_alternating(
+            [&] { run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s); },
+            [&] { run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+                          false, 0, false, true); },
+            s, reps);
+        const double t_grouped = gather_ab.second;
         const double t_dir = time_ms([&] {
             run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s, true, stride);
         }, s, reps);
         const double fl = flop_e * rows;
         if (!f16) {
-            std::printf("  %5d  %12s  %12.1f  %12.1f  %8s  %10.1f  %10s\n", R, "-", 1000 * t_mmq / E, 1000 * t_dir / E,
+            std::printf("  %5d  %12s  %12.1f  %12.1f  %12.1f  %12.1f  %8s  %10.1f  %10s\n", R, "-",
+                        1000 * t_mmq / E, 1000 * t_identity / E, 1000 * t_grouped / E, 1000 * t_dir / E,
                         "-", fl / (t_mmq * 1e9), "-");
             continue;
         }
-        std::printf("  %5d  %12.1f  %12.1f  %12.1f  %7.2fx  %10.1f  %10.1f\n", R, 1000 * t_f16 / E, 1000 * t_mmq / E,
-                    1000 * t_dir / E, t_f16 / t_mmq, fl / (t_mmq * 1e9), fl / (t_f16 * 1e9));
+        std::printf("  %5d  %12.1f  %12.1f  %12.1f  %12.1f  %12.1f  %7.2fx  %10.1f  %10.1f\n", R,
+                    1000 * t_f16 / E, 1000 * t_mmq / E, 1000 * t_identity / E, 1000 * t_grouped / E,
+                    1000 * t_dir / E,
+                    t_f16 / t_mmq, fl / (t_mmq * 1e9), fl / (t_f16 * 1e9));
     }
 }
 }  // namespace
@@ -540,11 +621,16 @@ int main(int argc, char** argv) {
             return 77;
         }
         bool ref = true, bench = false;
+        int power_limit_w = 0;
         for (int i = 1; i < argc; ++i) {
             if (!std::strcmp(argv[i], "--no-ref")) ref = false;
             else if (!std::strcmp(argv[i], "--bench")) bench = true;
+            else if (!std::strcmp(argv[i], "--power-limit-w") && i + 1 < argc)
+                power_limit_w = std::atoi(argv[++i]);
             else throw std::runtime_error(std::string("unknown argument ") + argv[i]);
         }
+        if (bench && power_limit_w <= 0)
+            throw std::runtime_error("--bench requires the enforced --power-limit-w value");
         const Pair pairs[] = {{GGML_TYPE_Q4_K, GGML_TYPE_Q5_1, "Q4_K / Q5_1"},
                               {GGML_TYPE_Q4_K, GGML_TYPE_Q8_0, "Q4_K / Q8_0"},
                               {GGML_TYPE_Q5_K, GGML_TYPE_Q8_0, "Q5_K / Q8_0"},
@@ -558,7 +644,7 @@ int main(int argc, char** argv) {
             for (const Pair& p : pairs)
                 for (bool outliers : {false, true}) run_pair(p, outliers, s);
         if (bench)
-            for (const Pair& p : pairs) bench_pair(p, s);
+            for (const Pair& p : pairs) bench_pair(p, s, power_limit_w);
         ck(cudaStreamDestroy(s), "destroy");
         std::printf("prefill K-quant MMQ parity passed\n");
         return 0;

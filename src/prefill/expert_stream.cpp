@@ -110,7 +110,7 @@ bool Prefill::Run::Chunk::Experts::Group::walk() {
                 const uint8_t* bd = rs >= 0 && m.cache ? m.cache->device_slot(rs) : m.ring_peer->slot_ptr(l, e);
                 if (!compute(j, bd, -1)) return false;
             } else {
-                cudaStreamWaitEvent(m.cs, m.copied[stage_of[j]], 0);
+                if (!group_gather) cudaStreamWaitEvent(m.cs, m.copied[stage_of[j]], 0);
                 if (!compute(j, m.stage_dev[stage_of[j]], stage_of[j])) return false;
             }
         }

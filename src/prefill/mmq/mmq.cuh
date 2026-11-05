@@ -422,8 +422,7 @@ static __global__ void mul_mat_q(
     const uint32_t nty = (nrows_x + I - 1) / I; // Number of tiles y
 
     // Initialize the ids for writing back data with just the index.
-    // For regular matrix multiplications this is never changed.
-    // For MoE the correct indices are loaded from ids_dst.
+    // Regular products keep these values; MoE products replace them with their row mapping.
     extern __shared__ int ids_dst_shared[]; // Stored at beginning of shared memory.
 #pragma unroll
     for (int j0 = 0; j0 < J; j0 += nwarps*warp_size) {
@@ -451,7 +450,7 @@ static __global__ void mul_mat_q(
         int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
         int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
-        if (ids_dst) {
+        if (expert_bounds) {
             col_low  = expert_bounds[zt + 0];
             col_high = expert_bounds[zt + 1];
             col_diff = col_high - col_low;
@@ -472,7 +471,7 @@ static __global__ void mul_mat_q(
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
+                ids_dst_shared[j] = ids_dst ? ids_dst[col_low + jt*J + j] : col_low + jt*J + j;
             }
             __syncthreads();
         }
@@ -525,7 +524,7 @@ static __global__ void mul_mat_q(
         int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
         int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
-        if (ids_dst) {
+        if (expert_bounds) {
             col_low  = expert_bounds[zt + 0];
             col_high = expert_bounds[zt + 1];
             col_diff = col_high - col_low;
@@ -552,7 +551,7 @@ static __global__ void mul_mat_q(
                     break;
                 }
 
-                ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
+                ids_dst_shared[j] = ids_dst ? ids_dst[col_low + jt*J + j] : col_low + jt*J + j;
             }
             __syncthreads();
         }
@@ -600,7 +599,7 @@ static __global__ void mul_mat_q(
     int offset_y       = wt*stride_sample_y   + zt*stride_channel_y;
     int offset_dst     = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst;
 
-    if (ids_dst) {
+    if (expert_bounds) {
         col_low  = expert_bounds[zt + 0];
         col_high = expert_bounds[zt + 1];
         col_diff = col_high - col_low;
@@ -725,7 +724,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int wt = tmp2.y;
     const int it = tmp2.x;
 
-    if (!ids_dst) {
+    if (!expert_bounds) {
         const int offset_dst = wt*stride_sample_dst + zt*stride_channel_dst + jt*J*stride_col_dst + it*I;
         dst += offset_dst;
 
@@ -754,7 +753,7 @@ static __global__ void mul_mat_q_stream_k_fixup(
     const int col_diff = col_high - col_low;
 
     for (int j = threadIdx.y*warp_size + threadIdx.x; j < J; j += nwarps*warp_size) {
-        ids_dst_shared[j] = ids_dst[col_low + jt*J + j];
+        ids_dst_shared[j] = ids_dst ? ids_dst[col_low + jt*J + j] : col_low + jt*J + j;
     }
     __syncthreads();
 

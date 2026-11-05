@@ -23,9 +23,6 @@ bool Prefill::Run::execute() {
     s.idx_dim = g.idx_key_dim;
     owner.rows_in_place_ = false;
     if (m.hist_on && !rows_in_place) m.hist_tokens += n;   // a kept chunk's tokens counted in the run that kept it
-    // the MMQ row table lives in the borrowed cache slots, which the refill after a prompt overwrites with experts:
-    // write it again for every prompt (a layout is reused as long as the chunk and the slots are the same)
-    if (m.ids_identity != nullptr) mmq::iota(m.ids_identity, m.T * K, m.cs);
     // The PLE rows of a chunk are read from the model file on the host (an SSD read per missed row): the chunk
     // after this one is read on a thread while the GPU runs this one, into the other of two buffers.  The rows
     // depend only on the tokens (the two before a position name its n-grams), so this is the same data.

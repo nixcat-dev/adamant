@@ -42,7 +42,7 @@ __device__ __forceinline__ float norm_warp_sum(float value) {
     return value;
 }
 
-template<int BlockSize>
+template<int BlockSize, int PrefetchItems>
 __global__ void weighted_rms_norm(const float* __restrict__ input,
                                    const float* __restrict__ gamma,
                                    float* __restrict__ output, int n_cols, float epsilon) {
@@ -52,6 +52,14 @@ __global__ void weighted_rms_norm(const float* __restrict__ input,
     gamma += row_offset;
     output += row_offset;
     float partial = 0.0f;
+    float prefetched_gamma[PrefetchItems > 0 ? PrefetchItems : 1];
+    if constexpr (PrefetchItems > 0) {
+#pragma unroll
+        for (int item = 0; item < PrefetchItems; ++item) {
+            const int col = tid + item * BlockSize;
+            if (col < n_cols) prefetched_gamma[item] = gamma[col];
+        }
+    }
     for (int col = tid; col < n_cols; col += BlockSize) {
         const float value = input[col];
         partial += value * value;
@@ -70,8 +78,16 @@ __global__ void weighted_rms_norm(const float* __restrict__ input,
 
     const float mean = partial / n_cols;
     const float scale = rsqrtf(mean + epsilon);
-    for (int col = tid; col < n_cols; col += BlockSize) {
-        output[col] = scale * input[col] * gamma[col];
+    if constexpr (PrefetchItems > 0) {
+#pragma unroll
+        for (int item = 0; item < PrefetchItems; ++item) {
+            const int col = tid + item * BlockSize;
+            if (col < n_cols) output[col] = scale * input[col] * prefetched_gamma[item];
+        }
+    } else {
+        for (int col = tid; col < n_cols; col += BlockSize) {
+            output[col] = scale * input[col] * gamma[col];
+        }
     }
 }
 
@@ -90,10 +106,17 @@ void native_gr_rms_norm_weighted(const float* input, const float* gamma, float* 
     check_pointer(gamma);
     check_pointer(output);
     const auto cuda_stream = static_cast<cudaStream_t>(stream);
-    if (n_cols < 1024)
-        weighted_rms_norm<256><<<unsigned(n_rows), 256, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
-    else
-        weighted_rms_norm<1024><<<unsigned(n_rows), 1024, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
+    if (n_cols < 1024) {
+        if (n_cols <= 4 * 256)
+            weighted_rms_norm<256, 4><<<unsigned(n_rows), 256, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
+        else
+            weighted_rms_norm<256, 0><<<unsigned(n_rows), 256, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
+    } else {
+        if (n_cols <= 4 * 1024)
+            weighted_rms_norm<1024, 4><<<unsigned(n_rows), 1024, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
+        else
+            weighted_rms_norm<1024, 0><<<unsigned(n_rows), 1024, 0, cuda_stream>>>(input, gamma, output, n_cols, epsilon);
+    }
     const auto error = cudaGetLastError();
     if (error != cudaSuccess)
         throw std::runtime_error(std::string("native GR RMSNorm launch: ") + cudaGetErrorString(error));

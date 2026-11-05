@@ -37,9 +37,13 @@
 // alignment; the launch counter must move on every tensor-core call, or the check checked nothing.  With
 // MMVQ_MMA=1 in the environment the sweeps above take it for their IQ4_XS case as well.
 //
-//     build/mmvq_multi_parity [--bench]      --bench: the dp4a and tensor-core kernels timed at the model's shapes
+//     build/mmvq_multi_parity [--bench] [--pair-bench --power-limit-w W]
+//     --bench: the existing dp4a and tensor-core kernels timed at the model's shapes
+//     --pair-bench: paired and separate gate/up MMVQ calls at N=2560, M=640, T=8; W labels the enforced limit
 #include "basalt/kernels/iq_kernels.hpp"
 #include "basalt/kernels/native_mmvq.hpp"
+#include "basalt/artifact/dequant.hpp"
+#include "basalt/kernels/f16_bits.hpp"
 
 #include <cuda_runtime.h>
 
@@ -217,6 +221,252 @@ int sweep(bool exact, cudaStream_t s, Totals& t) {
         if (!exact && case_wide == 0) ++t.powerless_cases;
     }
     return bad;
+}
+
+struct PairQ81Block {
+    uint16_t d;
+    uint16_t sum;
+    int8_t qs[32];
+};
+static_assert(sizeof(PairQ81Block) == 36);
+
+uint16_t pair_sane_half(std::mt19937& rng) {
+    const uint32_t r = rng();
+    return (uint16_t)(((r >> 31) << 15) | ((5u + (r >> 10) % 5u) << 10) | (r & 0x3ffu));
+}
+
+bool pair_case(int type, int n_in, int n_out, int ncols, cudaStream_t stream) {
+    namespace k = basalt::kernels;
+    const int block_elems = type == 8 ? 32 : 256;
+    const int block_bytes = type == 8 ? 34 : 210;
+    const int scale_offset = type == 8 ? 0 : 208;
+    const std::size_t weight_bytes = k::native_mmvq_weight_bytes(type, n_in, n_out);
+    const std::size_t qcol_bytes = k::native_q8_1_bytes(n_in, 1);
+    const std::size_t qbytes = k::native_q8_1_bytes(n_in, ncols);
+    const std::size_t output_count = std::size_t(ncols) * n_out;
+    std::mt19937 rng(0x73a1u + (unsigned)type * 31u + (unsigned)n_out);
+    std::vector<uint8_t> wa(weight_bytes), wb(weight_bytes);
+    for (uint8_t& value : wa) value = (uint8_t)rng();
+    for (uint8_t& value : wb) value = (uint8_t)rng();
+    const std::size_t blocks = std::size_t(n_out) * (n_in / block_elems);
+    for (std::size_t i = 0; i < blocks; ++i) {
+        const uint16_t ha = pair_sane_half(rng), hb = pair_sane_half(rng);
+        std::memcpy(wa.data() + i * block_bytes + scale_offset, &ha, sizeof(ha));
+        std::memcpy(wb.data() + i * block_bytes + scale_offset, &hb, sizeof(hb));
+    }
+    std::normal_distribution<float> normal(0.0f, 0.7f);
+    std::vector<float> x(std::size_t(ncols) * n_in);
+    for (float& value : x) value = normal(rng);
+    if (ncols > 1)
+        std::copy_n(x.begin(), n_in, x.begin() + std::size_t(ncols - 1) * n_in);
+
+    void *dwa = nullptr, *dwb = nullptr, *dxq = nullptr;
+    float* dx = nullptr;
+    float *d_base_a = nullptr, *d_base_b = nullptr, *d_pair_a = nullptr, *d_pair_b = nullptr;
+    float *d_single_a = nullptr, *d_single_b = nullptr;
+    auto alloc = [&](void** pointer, std::size_t bytes, const char* label) {
+        return ck(cudaMalloc(pointer, bytes), label);
+    };
+    const std::size_t output_bytes = (output_count + 2) * sizeof(float);
+    bool ok = alloc(&dwa, weight_bytes, "pair weights A") && alloc(&dwb, weight_bytes, "pair weights B") &&
+              alloc((void**)&dx, x.size() * sizeof(float), "pair input") && alloc(&dxq, qbytes, "pair Q8_1") &&
+              alloc((void**)&d_base_a, output_bytes, "pair baseline A") &&
+              alloc((void**)&d_base_b, output_bytes, "pair baseline B") &&
+              alloc((void**)&d_pair_a, output_bytes, "pair result A") &&
+              alloc((void**)&d_pair_b, output_bytes, "pair result B") &&
+              alloc((void**)&d_single_a, output_bytes, "pair single A") &&
+              alloc((void**)&d_single_b, output_bytes, "pair single B");
+    if (!ok) return false;
+    ok = ck(cudaMemcpy(dwa, wa.data(), weight_bytes, cudaMemcpyHostToDevice), "copy pair weights A") &&
+         ck(cudaMemcpy(dwb, wb.data(), weight_bytes, cudaMemcpyHostToDevice), "copy pair weights B") &&
+         ck(cudaMemcpy(dx, x.data(), x.size() * sizeof(float), cudaMemcpyHostToDevice), "copy pair input") &&
+         ck(cudaMemset(d_base_a, 0xa5, output_bytes), "fill pair baseline A") &&
+         ck(cudaMemset(d_base_b, 0xa5, output_bytes), "fill pair baseline B") &&
+         ck(cudaMemset(d_pair_a, 0xa5, output_bytes), "fill pair output A") &&
+         ck(cudaMemset(d_pair_b, 0xa5, output_bytes), "fill pair output B") &&
+         ck(cudaMemset(d_single_a, 0xa5, output_bytes), "fill pair single A") &&
+         ck(cudaMemset(d_single_b, 0xa5, output_bytes), "fill pair single B");
+    if (!ok) return false;
+    k::native_quantize_q8_1(dx, dxq, n_in, ncols, stream);
+    k::native_mmvq(type, dwa, dxq, d_base_a + 1, n_in, n_out, ncols, stream);
+    k::native_mmvq(type, dwb, dxq, d_base_b + 1, n_in, n_out, ncols, stream);
+    bool launched = false;
+    try {
+        launched = k::native_mmvq_pair(type, dwa, dwb, dxq, d_pair_a + 1, d_pair_b + 1,
+                                       n_in, n_out, ncols, stream);
+    } catch (const std::exception& error) {
+        std::printf("MMVQ pair type=%d N=%d M=%d T=%d: %s\n", type, n_in, n_out, ncols, error.what());
+        return false;
+    }
+    if (ncols == 1 ? launched : !launched) {
+        std::printf("MMVQ pair type=%d N=%d M=%d T=%d: wrong eligibility result\n", type, n_in, n_out, ncols);
+        return false;
+    }
+    for (int token = 0; token < ncols; ++token) {
+        const auto* q = static_cast<const uint8_t*>(dxq) + std::size_t(token) * qcol_bytes;
+        k::native_mmvq(type, dwa, q, d_single_a + 1 + std::size_t(token) * n_out, n_in, n_out, 1, stream);
+        k::native_mmvq(type, dwb, q, d_single_b + 1 + std::size_t(token) * n_out, n_in, n_out, 1, stream);
+    }
+    ok = ck(cudaStreamSynchronize(stream), "pair sync");
+    std::vector<uint8_t> host_q(qbytes);
+    ok = ok && ck(cudaMemcpy(host_q.data(), dxq, qbytes, cudaMemcpyDeviceToHost), "read pair Q8_1");
+    std::vector<float> base_a(output_count + 2), base_b(output_count + 2), pair_a(output_count + 2),
+                       pair_b(output_count + 2), single_a(output_count + 2), single_b(output_count + 2);
+    ok = ok && ck(cudaMemcpy(base_a.data(), d_base_a, output_bytes, cudaMemcpyDeviceToHost), "read pair baseline A") &&
+         ck(cudaMemcpy(base_b.data(), d_base_b, output_bytes, cudaMemcpyDeviceToHost), "read pair baseline B") &&
+         ck(cudaMemcpy(pair_a.data(), d_pair_a, output_bytes, cudaMemcpyDeviceToHost), "read pair A") &&
+         ck(cudaMemcpy(pair_b.data(), d_pair_b, output_bytes, cudaMemcpyDeviceToHost), "read pair B") &&
+         ck(cudaMemcpy(single_a.data(), d_single_a, output_bytes, cudaMemcpyDeviceToHost), "read pair single A") &&
+         ck(cudaMemcpy(single_b.data(), d_single_b, output_bytes, cudaMemcpyDeviceToHost), "read pair single B");
+    if (!ok) return false;
+    const uint32_t guard = 0xa5a5a5a5u;
+    bool parity = true;
+    double max_abs_cpu = 0.0, max_rel_cpu = 0.0;
+    static int frozen_type = 0;
+    static int frozen_n_in = 0;
+    static int frozen_n_out = 0;
+    static std::vector<uint8_t> frozen_q;
+    static std::vector<float> frozen_a, frozen_b;
+    const bool track_positions = n_in == 2560 && n_out == 640;
+    bool same_row_position = true;
+    if (track_positions && ncols == 1) {
+        frozen_type = type;
+        frozen_n_in = n_in;
+        frozen_n_out = n_out;
+        frozen_q.assign(host_q.begin(), host_q.begin() + qcol_bytes);
+        frozen_a.assign(single_a.begin() + 1, single_a.begin() + 1 + n_out);
+        frozen_b.assign(single_b.begin() + 1, single_b.begin() + 1 + n_out);
+    }
+    if (track_positions && ncols > 1) {
+        const bool have_frozen = frozen_type == type && frozen_n_in == n_in && frozen_n_out == n_out &&
+                                 frozen_q.size() == qcol_bytes && frozen_a.size() == std::size_t(n_out) &&
+                                 frozen_b.size() == std::size_t(n_out);
+        same_row_position = have_frozen;
+        if (have_frozen) {
+            const std::size_t last_q = std::size_t(ncols - 1) * qcol_bytes;
+            same_row_position = same_row_position &&
+                                std::memcmp(host_q.data(), frozen_q.data(), qcol_bytes) == 0 &&
+                                std::memcmp(host_q.data() + last_q, frozen_q.data(), qcol_bytes) == 0;
+            for (int row = 0; row < n_out; ++row) {
+                for (int token : {0, ncols - 1}) {
+                    const std::size_t at = std::size_t(token) * n_out + row + 1;
+                    same_row_position = same_row_position &&
+                                        std::memcmp(&single_a[at], &frozen_a[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&single_b[at], &frozen_b[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&pair_a[at], &frozen_a[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&pair_b[at], &frozen_b[row], sizeof(float)) == 0;
+                }
+            }
+        }
+    }
+    parity = parity && same_row_position;
+    for (const auto* values : {&base_a, &base_b, &pair_a, &pair_b, &single_a, &single_b}) {
+        uint32_t first = 0, last = 0;
+        std::memcpy(&first, values->data(), sizeof(first));
+        std::memcpy(&last, values->data() + output_count + 1, sizeof(last));
+        parity = parity && first == guard && last == guard;
+    }
+    std::vector<float> weight_row(n_in);
+    std::vector<double> input_row(n_in);
+    for (int matrix = 0; matrix < 2; ++matrix) {
+        const auto& packed = matrix == 0 ? wa : wb;
+        const auto& pair_result = matrix == 0 ? pair_a : pair_b;
+        const auto& previous = matrix == 0 ? base_a : base_b;
+        const auto& one_col = matrix == 0 ? single_a : single_b;
+        const auto& candidate = ncols == 1 ? previous : pair_result;
+        if (ncols == 1) {
+            for (std::size_t i = 1; i <= output_count; ++i)
+                parity = parity && std::memcmp(&pair_result[i], &guard, sizeof(guard)) == 0;
+        }
+        for (int row = 0; row < n_out; ++row) {
+            const uint8_t* weight = packed.data() + std::size_t(row) * (n_in / block_elems) * block_bytes;
+            for (int block = 0; block < n_in / block_elems; ++block) {
+                const uint8_t* packed_block = weight + std::size_t(block) * block_bytes;
+                float* decoded = weight_row.data() + std::size_t(block) * block_elems;
+                if (type == 8) basalt::dequantize_q8_0(packed_block, decoded);
+                else basalt::dequantize_q6_K(packed_block, decoded);
+            }
+            for (int token = 0; token < ncols; ++token) {
+                const auto* q = reinterpret_cast<const PairQ81Block*>(
+                    host_q.data() + std::size_t(token) * qcol_bytes);
+                for (int block = 0; block < n_in / 32; ++block) {
+                    const float scale = k::f32_from_f16(q[block].d);
+                    for (int i = 0; i < 32; ++i)
+                        input_row[std::size_t(block) * 32 + i] = double(scale) * q[block].qs[i];
+                }
+                double reference = 0.0;
+                for (int i = 0; i < n_in; ++i) reference += double(weight_row[i]) * input_row[i];
+                const std::size_t at = std::size_t(token) * n_out + row + 1;
+                const float value = candidate[at];
+                const double error = std::abs(double(value) - reference);
+                max_abs_cpu = std::max(max_abs_cpu, error);
+                max_rel_cpu = std::max(max_rel_cpu, error / std::max(std::abs(reference), 1.0e-30));
+                parity = parity && std::isfinite(value) &&
+                         std::memcmp(&candidate[at], &previous[at], sizeof(float)) == 0 &&
+                         std::memcmp(&candidate[at], &one_col[at], sizeof(float)) == 0 &&
+                         (ncols == 1 || std::memcmp(&pair_result[at], &previous[at], sizeof(float)) == 0) &&
+                         error <= 5.0e-4 * std::max(1.0, std::abs(reference));
+            }
+        }
+    }
+    std::printf("native_mmvq_pair: type=%s N=%d M=%d T=%d %s same_row_position=%s "
+                "previous_max_abs=0 previous_max_rel=0 "
+                "cpu_max_abs=%.3e cpu_max_rel=%.3e\n",
+                type == 8 ? "Q8_0" : "Q6_K", n_in, n_out, ncols, parity ? "PASS" : "FAIL",
+                track_positions && ncols > 1 ? (same_row_position ? "PASS" : "FAIL") : "n/a",
+                max_abs_cpu, max_rel_cpu);
+    cudaFree(dwa); cudaFree(dwb); cudaFree(dx); cudaFree(dxq); cudaFree(d_base_a); cudaFree(d_base_b);
+    cudaFree(d_pair_a); cudaFree(d_pair_b); cudaFree(d_single_a); cudaFree(d_single_b);
+    return parity;
+}
+
+int pair_section(cudaStream_t stream) {
+    int failures = 0;
+    for (int type : {8, 14}) {
+        for (int ncols = 1; ncols <= 8; ++ncols)
+            failures += !pair_case(type, 2560, 640, ncols, stream);
+        for (int n_out : {1, 3, 639, 641}) {
+            for (int ncols : {2, 5, 8})
+                failures += !pair_case(type, 256, n_out, ncols, stream);
+        }
+        for (int n_out : {639, 641}) {
+            for (int ncols : {2, 5, 8})
+                failures += !pair_case(type, 2560, n_out, ncols, stream);
+        }
+    }
+    basalt::kernels::native_mmvq_set_multi_exact(false);
+    bool unexpected_launch = false;
+    float *ya = nullptr, *yb = nullptr;
+    void *wa = nullptr, *wb = nullptr, *xq = nullptr;
+    const int n_in = 2560, n_out = 640, ncols = 2;
+    bool allocated = ck(cudaMalloc(&wa, basalt::kernels::native_mmvq_weight_bytes(8, n_in, n_out)), "pair control weights A") &&
+                     ck(cudaMalloc(&wb, basalt::kernels::native_mmvq_weight_bytes(8, n_in, n_out)), "pair control weights B") &&
+                     ck(cudaMalloc(&xq, basalt::kernels::native_q8_1_bytes(n_in, ncols)), "pair control input") &&
+                     ck(cudaMalloc((void**)&ya, std::size_t(ncols) * n_out * sizeof(float)), "pair control output A") &&
+                     ck(cudaMalloc((void**)&yb, std::size_t(ncols) * n_out * sizeof(float)), "pair control output B");
+    if (!allocated) {
+        cudaFree(wa); cudaFree(wb); cudaFree(xq); cudaFree(ya); cudaFree(yb);
+        basalt::kernels::native_mmvq_set_multi_exact(true);
+        return failures + 1;
+    }
+    cudaMemset(ya, 0xa5, std::size_t(ncols) * n_out * sizeof(float));
+    cudaMemset(yb, 0xa5, std::size_t(ncols) * n_out * sizeof(float));
+    try {
+        unexpected_launch = basalt::kernels::native_mmvq_pair(8, wa, wb, xq, ya, yb, n_in, n_out, ncols, stream);
+    } catch (...) { unexpected_launch = true; }
+    std::vector<uint32_t> untouched(std::size_t(ncols) * n_out * 2);
+    ck(cudaMemcpy(untouched.data(), ya, std::size_t(ncols) * n_out * sizeof(float), cudaMemcpyDeviceToHost),
+       "pair control read A");
+    ck(cudaMemcpy(untouched.data() + std::size_t(ncols) * n_out, yb,
+                  std::size_t(ncols) * n_out * sizeof(float), cudaMemcpyDeviceToHost), "pair control read B");
+    const bool untouched_ok = std::all_of(untouched.begin(), untouched.end(), [](uint32_t bits) {
+        return bits == 0xa5a5a5a5u;
+    });
+    failures += unexpected_launch || !untouched_ok;
+    std::printf("native_mmvq_pair negative control: %s\n", (!unexpected_launch && untouched_ok) ? "PASS" : "FAIL");
+    cudaFree(wa); cudaFree(wb); cudaFree(xq); cudaFree(ya); cudaFree(yb);
+    basalt::kernels::native_mmvq_set_multi_exact(true);
+    return failures;
 }
 
 // ---- the tensor-core path
@@ -522,11 +772,89 @@ void bench_q80(cudaStream_t s) {
     cudaEventDestroy(e1);
 }
 
+void bench_pair(cudaStream_t stream, int power_limit_w) {
+    namespace k = basalt::kernels;
+    constexpr int n_in = 2560, n_out = 640, ncols = 8, repeats = 100, rounds = 8;
+    const std::size_t qbytes = k::native_q8_1_bytes(n_in, ncols);
+    std::vector<float> input(std::size_t(n_in) * ncols, 0.25f);
+    void *xq = nullptr, *dx = nullptr;
+    if (!ck(cudaMalloc(&xq, qbytes), "pair bench Q8_1") ||
+        !ck(cudaMalloc(&dx, input.size() * sizeof(float)), "pair bench input")) {
+        cudaFree(xq); cudaFree(dx); return;
+    }
+    if (!ck(cudaMemcpy(dx, input.data(), input.size() * sizeof(float), cudaMemcpyHostToDevice),
+            "pair bench copy input")) { cudaFree(xq); cudaFree(dx); return; }
+    k::native_quantize_q8_1((const float*)dx, xq, n_in, ncols, stream);
+    cudaStreamSynchronize(stream);
+    cudaEvent_t begin, end;
+    if (!ck(cudaEventCreate(&begin), "pair bench event begin") || !ck(cudaEventCreate(&end), "pair bench event end")) {
+        cudaFree(xq); cudaFree(dx); return;
+    }
+    for (int type : {8, 14}) {
+        const std::size_t weight_bytes = k::native_mmvq_weight_bytes(type, n_in, n_out);
+        std::vector<uint8_t> weights(weight_bytes, 0x5a);
+        void *wa = nullptr, *wb = nullptr;
+        float *ya = nullptr, *yb = nullptr;
+        const bool allocated = ck(cudaMalloc(&wa, weight_bytes), "pair bench weights A") &&
+                               ck(cudaMalloc(&wb, weight_bytes), "pair bench weights B") &&
+                               ck(cudaMalloc((void**)&ya, std::size_t(ncols) * n_out * sizeof(float)), "pair bench output A") &&
+                               ck(cudaMalloc((void**)&yb, std::size_t(ncols) * n_out * sizeof(float)), "pair bench output B");
+        if (!allocated) { cudaFree(wa); cudaFree(wb); cudaFree(ya); cudaFree(yb); continue; }
+        const bool copied = ck(cudaMemcpy(wa, weights.data(), weight_bytes, cudaMemcpyHostToDevice), "pair bench copy A") &&
+                            ck(cudaMemcpy(wb, weights.data(), weight_bytes, cudaMemcpyHostToDevice), "pair bench copy B");
+        if (!copied) { cudaFree(wa); cudaFree(wb); cudaFree(ya); cudaFree(yb); continue; }
+        for (int i = 0; i < 20; ++i) {
+            k::native_mmvq(type, wa, xq, ya, n_in, n_out, ncols, stream);
+            k::native_mmvq(type, wb, xq, yb, n_in, n_out, ncols, stream);
+            k::native_mmvq_pair(type, wa, wb, xq, ya, yb, n_in, n_out, ncols, stream);
+        }
+        double separate_us = 0.0, pair_us = 0.0;
+        for (int order = 0; order < rounds; ++order) {
+            for (int variant = 0; variant < 2; ++variant) {
+                const bool paired = ((order + variant) & 1) != 0;
+                cudaEventRecord(begin, stream);
+                for (int repeat = 0; repeat < repeats; ++repeat) {
+                    if (paired) k::native_mmvq_pair(type, wa, wb, xq, ya, yb, n_in, n_out, ncols, stream);
+                    else {
+                        k::native_mmvq(type, wa, xq, ya, n_in, n_out, ncols, stream);
+                        k::native_mmvq(type, wb, xq, yb, n_in, n_out, ncols, stream);
+                    }
+                }
+                cudaEventRecord(end, stream);
+                cudaEventSynchronize(end);
+                float milliseconds = 0.0f;
+                cudaEventElapsedTime(&milliseconds, begin, end);
+                (paired ? pair_us : separate_us) += 1000.0 * milliseconds / repeats;
+            }
+        }
+        separate_us /= rounds;
+        pair_us /= rounds;
+        const double bytes_gb = 2.0 * weight_bytes;
+        std::printf("native_mmvq_pair --bench: %s N=%d M=%d T=%d power_limit_w=%d separate=%.2f us (%.1f GB/s) "
+                    "pair=%.2f us (%.1f GB/s)\n",
+                    type == 8 ? "Q8_0" : "Q6_K", n_in, n_out, ncols, power_limit_w, separate_us,
+                    bytes_gb / separate_us / 1e3, pair_us, bytes_gb / pair_us / 1e3);
+        cudaFree(wa); cudaFree(wb); cudaFree(ya); cudaFree(yb);
+    }
+    cudaEventDestroy(begin); cudaEventDestroy(end); cudaFree(xq); cudaFree(dx);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
     bool do_bench = false;
-    for (int i = 1; i < argc; ++i) do_bench |= std::string(argv[i]) == "--bench";
+    bool do_pair_bench = false;
+    int power_limit_w = 0;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        do_bench |= arg == "--bench";
+        do_pair_bench |= arg == "--pair-bench";
+        if (arg == "--power-limit-w" && i + 1 < argc) power_limit_w = std::atoi(argv[++i]);
+    }
+    if (do_pair_bench && power_limit_w <= 0) {
+        std::printf("--pair-bench requires --power-limit-w W (the externally enforced GPU limit)\n");
+        return 2;
+    }
     cudaStream_t s;
     if (!ck(cudaStreamCreate(&s), "stream create")) return 1;
 
@@ -534,9 +862,11 @@ int main(int argc, char** argv) {
     const int bad = sweep(true, s, on);
     const int bad_off = sweep(false, s, off);
     basalt::kernels::native_mmvq_set_multi_exact(true);   // back to the default
+    const int bad_pair = pair_section(s);
     const int bad_mma = mma_section(s);
     const int bad_q80 = q80_section(s);
     if (do_bench) { bench(s); bench_q80(s); }
+    if (do_pair_bench) bench_pair(s, power_limit_w);
 
     std::printf("\nmulti_exact on:   %lld outputs compared, %lld differ bitwise, %lld non-finite\n",
                 on.checked, on.diff, on.nonfinite);
@@ -551,6 +881,11 @@ int main(int argc, char** argv) {
     if (bad_q80 != 0) {
         std::printf("\nmmvq_multi_parity: FAILED. %d one-column Q8_0 case(s) differ from the two-column call or the "
                     "float64 reference.\n", bad_q80);
+        return 1;
+    }
+    if (bad_pair != 0) {
+        std::printf("\nmmvq_multi_parity: FAILED. %d paired Q8_0/Q6_K case(s) differ from the existing kernels or CPU reference.\n",
+                    bad_pair);
         return 1;
     }
     if (bad_mma != 0) {

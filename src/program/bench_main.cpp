@@ -844,7 +844,10 @@ int main(int argc, char** argv) {
     const bool windows_on = !o.no_windows;
     if (do_perf) {
         if (windows_on) {
-            std::remove(draft_log.c_str());
+            if (!prepare_log_file(draft_log, err)) {
+                basalt::log::error("basalt-bench", "%s", err.c_str());
+                return 2;
+            }
             set_arg(perf_args, "--draft-log", draft_log);
         }
         for (const auto& a : perf_args) engine_args_text += (engine_args_text.empty() ? "" : " ") + a;

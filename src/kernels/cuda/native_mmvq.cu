@@ -1143,14 +1143,25 @@ struct SmallTraits {
 // equal to ncols = 1 only to float rounding (the cross-warp reduction groups partial sums differently).
 bool g_multi_exact = true;   // the upstream layout is not the default
 
-template<typename F, int NCOLS, int NW, int ROWS>
+template<typename F, int NCOLS, int NW, int ROWS, bool PAIR = false>
 __launch_bounds__(NW * WARP, (ROWS <= 2 ? 4 : 1))
 __global__ void native_mmvq_multi_kernel(const typename F::Block* __restrict__ w,
                                          const Q81Block* __restrict__ x,
-                                         float* __restrict__ y, int n_in, int n_out) {
+                                         float* __restrict__ y, int n_in, int n_out,
+                                         const typename F::Block* __restrict__ w2,
+                                         float* __restrict__ y2) {
     constexpr int BPI = F::BPI * NW / WARPS;           // blocks per iteration scale with the warp count
     const int tid = WARP * int(threadIdx.y) + int(threadIdx.x);
-    const int row0 = ROWS * int(blockIdx.x);
+    int block = int(blockIdx.x);
+    if constexpr (PAIR) {
+        const int matrix_blocks = (n_out + ROWS - 1) / ROWS;
+        if (block >= matrix_blocks) {
+            block -= matrix_blocks;
+            w = w2;
+            y = y2;
+        }
+    }
+    const int row0 = ROWS * block;
     const int blocks_per_row = n_in / F::DIV;
     pdl_wait();
     const int x_stride = n_in / Q8K;                   // Q8_1 blocks per activation column
@@ -1197,17 +1208,19 @@ void launch_multi_n(const void* weights, const void* x_q8_1, float* y, int n_in,
     if (!g_multi_exact) {
         constexpr int NW = NCOLS <= 4 ? 4 : 2;
         const unsigned blocks = unsigned((std::size_t(n_out) + 1) / 2);
-        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, NW, 2>, dim3(blocks), dim3(WARP, NW), 0, s, w, x, y, n_in, n_out);
+        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, NW, 2>, dim3(blocks), dim3(WARP, NW), 0, s, w, x, y,
+                   n_in, n_out, nullptr, nullptr);
         return;
     }
     const dim3 threads(WARP, WARPS);
     if (n_in / F::DIV < F::BPI) {
         constexpr int ROWS = 2;
         const unsigned blocks = unsigned((std::size_t(n_out) + ROWS - 1) / ROWS);
-        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS>, dim3(blocks), threads, 0, s, w, x, y, n_in, n_out);
+        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS>, dim3(blocks), threads, 0, s, w, x, y,
+                   n_in, n_out, nullptr, nullptr);
     } else {
-        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1>, dim3(unsigned(n_out)), threads, 0, s, w, x, y, n_in,
-                   n_out);
+        launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, 1>, dim3(unsigned(n_out)), threads, 0, s, w, x, y,
+                   n_in, n_out, nullptr, nullptr);
     }
 }
 
@@ -1224,6 +1237,44 @@ void launch_multi(const void* weights, const void* x_q8_1, float* y, int n_in, i
         case 7: launch_multi_n<F, 7>(weights, x_q8_1, y, n_in, n_out, s); break;
         case 8: launch_multi_n<F, 8>(weights, x_q8_1, y, n_in, n_out, s); break;
         default: throw std::invalid_argument("native MMVQ multi-column launch requires 2 <= ncols <= 8");
+    }
+}
+
+template<typename F, int NCOLS, int ROWS>
+void launch_pair_rows(const void* weights_a, const void* weights_b, const void* x_q8_1,
+                      float* y_a, float* y_b, int n_in, int n_out, cudaStream_t stream) {
+    const auto* wa = static_cast<const typename F::Block*>(weights_a);
+    const auto* wb = static_cast<const typename F::Block*>(weights_b);
+    const auto* x = static_cast<const Q81Block*>(x_q8_1);
+    const dim3 threads(WARP, WARPS);
+    const unsigned matrix_blocks = n_in / F::DIV < F::BPI
+                                       ? unsigned((std::size_t(n_out) + ROWS - 1) / ROWS)
+                                       : unsigned(n_out);
+    launch_pdl(native_mmvq_multi_kernel<F, NCOLS, WARPS, ROWS, true>, dim3(2U * matrix_blocks),
+               threads, 0, stream, wa, x, y_a, n_in, n_out, wb, y_b);
+}
+
+template<typename F, int NCOLS>
+void launch_pair_n(const void* weights_a, const void* weights_b, const void* x_q8_1,
+                   float* y_a, float* y_b, int n_in, int n_out, cudaStream_t stream) {
+    if (n_in / F::DIV < F::BPI)
+        launch_pair_rows<F, NCOLS, 2>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream);
+    else
+        launch_pair_rows<F, NCOLS, 1>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream);
+}
+
+template<typename F>
+void launch_pair(const void* weights_a, const void* weights_b, const void* x_q8_1,
+                 float* y_a, float* y_b, int n_in, int n_out, int ncols, cudaStream_t stream) {
+    switch (ncols) {
+        case 2: launch_pair_n<F, 2>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 3: launch_pair_n<F, 3>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 4: launch_pair_n<F, 4>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 5: launch_pair_n<F, 5>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 6: launch_pair_n<F, 6>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 7: launch_pair_n<F, 7>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        case 8: launch_pair_n<F, 8>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, stream); break;
+        default: throw std::invalid_argument("native MMVQ pair requires 2 <= ncols <= 8");
     }
 }
 
@@ -1989,6 +2040,27 @@ void native_mmvq(int ggml_type, const void* weights, const void* x_q8_1, float* 
         iq_mmvq(ggml_type, weights, x_q8_1, y, n_in, n_out, ncols, stream); break;
     default: throw std::invalid_argument("unsupported native MMVQ GGML type");
     }
+}
+
+bool native_mmvq_pair(int ggml_type, const void* weights_a, const void* weights_b, const void* x_q8_1,
+                      float* y_a, float* y_b, int n_in, int n_out, int ncols, void* stream) {
+    if (!g_multi_exact || (ggml_type != 8 && ggml_type != 14) || ncols < 2 || ncols > 8) return false;
+    validate_shape(n_in, ncols, ggml_type == 8 ? 32 : 256);
+    if (n_out <= 0) throw std::invalid_argument("native MMVQ pair requires n_out > 0");
+    validate_pointer(weights_a);
+    validate_pointer(weights_b);
+    validate_pointer(x_q8_1);
+    validate_pointer(y_a);
+    validate_pointer(y_b);
+    validate_stream(stream);
+    const auto s = static_cast<cudaStream_t>(stream);
+    if (ggml_type == 8)
+        launch_pair<SmallTraits<Q80Block, 8>>(weights_a, weights_b, x_q8_1, y_a, y_b,
+                                              n_in, n_out, ncols, s);
+    else
+        launch_pair<Q6KTraits>(weights_a, weights_b, x_q8_1, y_a, y_b, n_in, n_out, ncols, s);
+    launch_check();
+    return true;
 }
 
 

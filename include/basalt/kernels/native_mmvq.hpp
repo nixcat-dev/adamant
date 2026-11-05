@@ -131,4 +131,9 @@ std::size_t native_mmvq_weight_bytes(int ggml_type, int n_in, int n_out);
 void native_mmvq(int ggml_type, const void* weights, const void* x_q8_1, float* y,
                  int n_in, int n_out, int ncols, void* stream);
 
+/// Two same-format Q8_0 or Q6_K projections from the same Q8_1 columns in one exact-layout launch.
+/// Returns false without launching when the pair cannot use the current multi-column arithmetic path.
+bool native_mmvq_pair(int ggml_type, const void* weights_a, const void* weights_b, const void* x_q8_1,
+                      float* y_a, float* y_b, int n_in, int n_out, int ncols, void* stream);
+
 } // namespace basalt::kernels

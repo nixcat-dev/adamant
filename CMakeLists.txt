@@ -814,6 +814,14 @@ basalt_gpu_test(NAME native_grouped_parity COMMAND native_grouped_parity)
 # dec_moe_glue (plan built inside, gate/up pair kernel, SwiGLU, down) bitwise vs native_expert_grouped, every covered pair
 basalt_gpu_test(NAME native_grouped_parity_glue COMMAND native_grouped_parity --glue)
 set_tests_properties(native_grouped_parity_glue PROPERTIES TIMEOUT 300)
+
+# Weighted native GR RMSNorm against the frozen kernel and a double-precision CPU reference.
+add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cu)
+target_include_directories(native_gr_norm_parity PRIVATE ${_gpu_include_directories})
+target_link_libraries(native_gr_norm_parity PRIVATE kernels ${_gpu_runtime_target})
+target_compile_options(native_gr_norm_parity PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
+basalt_gpu_test(NAME native_gr_norm_parity COMMAND native_gr_norm_parity)
+
 add_executable(shared_expert_parity tests/kernels/shared_expert_parity.cpp)
 target_include_directories(shared_expert_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(shared_expert_parity PRIVATE kernels ${_gpu_runtime_target})
@@ -1104,6 +1112,14 @@ target_link_libraries(probe_derive_test PRIVATE engine_session warnings)
 basalt_embed_manifest(probe_derive_test)
 basalt_cpu_test(NAME probe_derive_test COMMAND probe_derive_test)
 set_tests_properties(probe_derive_test PROPERTIES TIMEOUT 60)
+
+# the decode CPU/PCIe miss share's pool-rate rule and window fit (CPU only)
+add_executable(pcie_balance_test tests/program/pcie_balance_test.cpp)
+target_include_directories(pcie_balance_test PRIVATE include)
+target_link_libraries(pcie_balance_test PRIVATE warnings)
+basalt_embed_manifest(pcie_balance_test)
+basalt_cpu_test(NAME pcie_balance_test COMMAND pcie_balance_test)
+set_tests_properties(pcie_balance_test PROPERTIES TIMEOUT 60)
 
 # the start-up picks for settings left out: the rules and the printed line (CPU only)
 add_executable(image_loan_test tests/program/image_loan_test.cpp)

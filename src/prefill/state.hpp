@@ -63,7 +63,7 @@ struct Prefill::Impl {
     // row map, the group bounds, the group buffers of gathered experts
     void *Xq = nullptr, *Hq = nullptr;
     float* H = nullptr;
-    int32_t *ids_identity = nullptr, *bounds_dev = nullptr;
+    int32_t* bounds_dev = nullptr;
     uint8_t *grp_gu = nullptr, *grp_d = nullptr;
     std::vector<int32_t> bounds_host;
     std::unique_ptr<mmq::Context> mmq_ctx;

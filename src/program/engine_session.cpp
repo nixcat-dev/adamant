@@ -91,10 +91,21 @@ private:
 };
 }  // namespace
 
+bool prepare_log_file(const std::string& path, std::string& err) {
+    const int fd = basalt::platform::open_write_utf8(path);
+    if (fd < 0) {
+        err = "cannot write log file " + path;
+        return false;
+    }
+    basalt::platform::close_fd(fd);
+    return true;
+}
+
 bool Engine::start(const std::string& engine_bin, const std::vector<std::string>& args, const std::string& log_path,
                    std::string& err) {
     std::vector<std::string> argv = {engine_bin, "--serve"};
     argv.insert(argv.end(), args.begin(), args.end());
+    if (!prepare_log_file(log_path, err)) return false;
     if (!basalt::platform::spawn_piped(argv, log_path, child_, err)) return false;
     basalt::platform::set_stop_child(child_.child);
     log_path_ = log_path;
