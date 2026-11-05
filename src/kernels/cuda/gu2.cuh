@@ -220,6 +220,25 @@ template<> struct Fmt2<21> {   // IQ3_S: 110-byte blocks (d, 64 grid bytes, qh[8
     }
 };
 
+template<> struct Fmt2<23> {   // IQ4_XS: 136-byte blocks of 256 values, 8 calls a block and 4 sub-groups a call
+    static constexpr int kGridWords = 1;   // no grid
+    using W = Split<23>::W;
+    __device__ static W load(const uint8_t* row, int k, const uint32_t*) {
+        return Split<23>::load(row, k >> 3, 4 * (k & 7));
+    }
+    __device__ static void apply(const W& r, const block_q8_1* __restrict__ x, float& d, float& f) {
+        int sumi = 0;
+#pragma unroll
+        for (int j = 0; j < 4; ++j) {
+            sumi = ggml_cuda_dp4a(r.v[j].x, get_int_b4(x->qs, j + 0), sumi);
+            sumi = ggml_cuda_dp4a(r.v[j].y, get_int_b4(x->qs, j + 4), sumi);
+        }
+        sumi *= r.ls - 32;
+        d = r.dw * __low2float(x->ds);
+        f = (float) sumi;
+    }
+};
+
 template<> struct Fmt2<42> {   // Q2_0: 18-byte blocks of 64 values, two calls a block; Split<42>'s words
     static constexpr int kGridWords = 4;   // no grid
     using W = Split<42>::W;
@@ -238,7 +257,7 @@ template<> struct Fmt2<42> {   // Q2_0: 18-byte blocks of 64 values, two calls a
 
 template<int TY>
 __device__ __forceinline__ const uint32_t* stage_grid(uint32_t* s, int tid) {
-    if constexpr (TY == 42) {
+    if constexpr (TY == 42 || TY == 23) {
         return s;
     } else if constexpr (TY == 21) {
         for (int i = tid; i < 512; i += 256) s[i] = iq3s_grid[i];
@@ -330,7 +349,7 @@ __device__ __forceinline__ void pair(const uint8_t* blob, int row, int e0, int e
 
 }  // namespace gu2
 
-template<int TG> inline constexpr bool kGu2 = TG == 16 || TG == 17 || TG == 18 || TG == 21 || TG == 22;
+template<int TG> inline constexpr bool kGu2 = TG == 16 || TG == 17 || TG == 18 || TG == 21 || TG == 22 || TG == 23;
 // the grid formats and Q2_0 (the grouped launch and the peer kernel's Q2_0 build)
 template<int TG> inline constexpr bool kGu2Q2 = kGu2<TG> || TG == 42;
 constexpr int GU2_ROWS = 16;   // rows per block: two a warp

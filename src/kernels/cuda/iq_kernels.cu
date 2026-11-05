@@ -1086,6 +1086,46 @@ template<> struct Split<7> {   // Q5_1
         return sumi * (r.dm.x * d8) + sumu * (r.dm.y * d8);
     }
 };
+template<> inline constexpr bool kSplit<6> = true;
+template<> struct Split<6> {   // Q5_0: symmetric, one delta; the -16 offset per weight rides on ds.y (vec_dot_q5_0_q8_1's chain)
+    struct W { int lo[VDR_Q5_0], hi[VDR_Q5_0]; float d; };
+    template<bool STAGE_GRID = false>
+    __device__ static W load(const void* __restrict__ vbq, int kbx, int iqs, const uint32_t* __restrict__ = nullptr) {
+        const block_q5_0* bq5_0 = (const block_q5_0*) vbq + kbx;
+        W r;
+#pragma unroll
+        for (int i = 0; i < VDR_Q5_0; ++i) {
+            const int vl = get_int_b2(bq5_0->qs, iqs + i);
+            const int vh = get_int_b2(bq5_0->qh, 0) >> (4 * (iqs + i));
+            int vi0 = (vl >> 0) & 0x0F0F0F0F;
+            vi0 |= (vh << 4) & 0x00000010;
+            vi0 |= (vh << 11) & 0x00001000;
+            vi0 |= (vh << 18) & 0x00100000;
+            vi0 |= (vh << 25) & 0x10000000;
+            int vi1 = (vl >> 4) & 0x0F0F0F0F;
+            vi1 |= (vh >> 12) & 0x00000010;
+            vi1 |= (vh >> 5) & 0x00001000;
+            vi1 |= (vh << 2) & 0x00100000;
+            vi1 |= (vh << 9) & 0x10000000;
+            r.lo[i] = vi0;
+            r.hi[i] = vi1;
+        }
+        r.d = __half2float(bq5_0->d);
+        return r;
+    }
+    __device__ static float apply(const W& r, const block_q8_1* __restrict__ bq8_1, int iqs) {
+        int sumi = 0;
+#pragma unroll
+        for (int i = 0; i < VDR_Q5_0; ++i) {
+            const int u0 = get_int_b4(bq8_1->qs, iqs + i), u1 = get_int_b4(bq8_1->qs, iqs + i + QI5_0);
+            sumi = ggml_cuda_dp4a(r.lo[i], u0, sumi);
+            sumi = ggml_cuda_dp4a(r.hi[i], u1, sumi);
+        }
+        const float d8 = __low2float(bq8_1->ds);
+        const float s8 = __high2float(bq8_1->ds);
+        return r.d * (sumi * d8 - (16.0f * VDR_Q5_0 / QI5_0) * s8);
+    }
+};
 template<> inline constexpr bool kSplit<8> = true;
 template<> struct Split<8> {   // Q8_0
     struct W { int q[VDR_Q8_0]; float d; };
