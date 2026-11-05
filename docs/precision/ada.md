@@ -47,8 +47,9 @@ Memory, race, initialization, and synchronization checks are required for change
 copy and synchronization paths. Resource and graph-capture behavior must be
 verified on the target GPU, not inferred from a successful host test.
 
-The completed port requires decode-path PPL/KLD and top-1 agreement against a
-Q8_0 reference, plus prefill/long-context and MTP on/off checks. Report the exact
+The completed port requires decode-path PPL/KLD and top-1 agreement against the
+BF16 reference ([method](quality.md#the-bf16-reference)), plus prefill/long-context and
+MTP on/off checks. Report the exact
 model and fixture identities, pinned expert placement, reference provenance,
 configuration, and enforced GPU power limit with results. Do not treat the
 short quality fixture as coverage of every prompt path.
