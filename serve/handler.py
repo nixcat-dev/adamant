@@ -23,7 +23,7 @@ from serve.config import checked_sampling
 from serve.frontend import anthropic_to_messages, forced_call, openai_to_messages
 from serve.api.openai import openai_chunks, openai_collect
 from serve.api.responses import ResponsesError
-from serve.prompt import primed
+from serve.prompt import ContextOverflow, primed
 from serve.security import host_allowed, host_names_for, key_matches, origin_allowed, peer_of, remote_reason
 from serve.service import LOG_FIRST_LINES, LOG_MAX_LINES, Service, _debug_req
 from serve.api.structured import anthropic_format, check_format
@@ -409,6 +409,9 @@ def make_handler(svc: Service):
             except ValueError as e:
                 if path == "/v1/responses":
                     self._json(400, responses_error_body(str(e)))
+                elif isinstance(e, ContextOverflow) and path.startswith("/v1/messages"):
+                    # Anthropic's own wording first: clients that compact or shorten on it (Claude Code) act
+                    self._json(400, {"error": {"type": "invalid_request_error", "message": e.anthropic_text()}})
                 else:
                     self._json(400, {"error": {"type": "invalid_request_error", "message": str(e)}})
             except ModelBusy as e:

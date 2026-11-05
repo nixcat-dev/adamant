@@ -11,20 +11,39 @@ import re
 CTX_SLACK = 8               # the engine rejects prompt + max_new + 8 > context
 
 
-def room_error(n: int, ctx: int) -> ValueError:
-    return ValueError("request exceeds the context window: "
-                      f"prompt ({n} tokens) leaves no room to answer in the context "
-                      f"({ctx}); requests are never truncated")
+class ContextOverflow(ValueError):
+    """A request that does not fit the context (a 400 on every API). It keeps the numbers, so /v1/messages can
+    also say it the way Anthropic's API does: a client that decides from the wording (Claude Code compacts on
+    "prompt is too long" and shortens max_tokens on "input length and `max_tokens` exceed context limit") then
+    does what it does for Anthropic's own error."""
+
+    def __init__(self, text, *, prompt, context, max_new=None):
+        super().__init__(text)
+        self.prompt, self.context, self.max_new = prompt, context, max_new
+
+    def anthropic_text(self) -> str:
+        # the prompt alone leaves no room: name the largest prompt that still leaves a token to answer
+        if self.max_new is None or self.prompt > self.context - CTX_SLACK - 1:
+            return f"prompt is too long: {self.prompt} tokens > {self.context - CTX_SLACK - 1} maximum; {self}"
+        return (f"input length and `max_tokens` exceed context limit: {self.prompt} + {self.max_new} "
+                f"> {self.context - CTX_SLACK}; {self}")
 
 
-def overflow_error(n: int, max_new: int, ctx: int) -> ValueError:
+def room_error(n: int, ctx: int) -> ContextOverflow:
+    return ContextOverflow("request exceeds the context window: "
+                           f"prompt ({n} tokens) leaves no room to answer in the context "
+                           f"({ctx}); requests are never truncated", prompt=n, context=ctx)
+
+
+def overflow_error(n: int, max_new: int, ctx: int) -> ContextOverflow:
     room = ctx - CTX_SLACK - n
-    return ValueError("request exceeds the context window: "
-                      f"prompt ({n} tokens) + max tokens ({max_new}) exceeds the context "
-                      f"({ctx}); requests are never truncated. Send a smaller "
-                      f"max_tokens (at most {max(0, room)} here), or start the server with "
-                      "--fit-max-tokens (or set \"fit-max-tokens\": true in the \"server\" section of "
-                      "the --config file) to shorten it to the room left")
+    return ContextOverflow("request exceeds the context window: "
+                           f"prompt ({n} tokens) + max tokens ({max_new}) exceeds the context "
+                           f"({ctx}); requests are never truncated. Send a smaller "
+                           f"max_tokens (at most {max(0, room)} here), or start the server with "
+                           "--fit-max-tokens (or set \"fit-max-tokens\": true in the \"server\" section of "
+                           "the --config file) to shorten it to the room left",
+                           prompt=n, context=ctx, max_new=max_new)
 
 
 _OVERFLOW = re.compile(r"prompt \((\d+) tokens\) \+ max_new \((\d+)\) exceeds the context \((\d+)\)")
