@@ -65,10 +65,8 @@ Development measurements, not the maintainer's headline runs: one RTX 4090 at a
 int8 KV, expert cache auto — all experts held in 17.4 GiB of VRAM and 29.4 GiB of
 page-locked RAM, none read from the SSD.
 
-| Same prompt, 128 tokens | tok/s |
-|---|---:|
-| Strata (the installed engine, same card and model) | 91.5 |
-| Adamant | 119.0 |
+A measured Adamant-versus-Strata development comparison across three fixtures
+and two prompt lengths is documented in [the comparison report](docs/benchmarks/strata-comparison.md).
 
 `basalt-bench` fixtures, MTP drafter off → on: conv 115 → 190, struct 116 → 372,
 prose 116 → 169 tok/s (draft acceptance 69%, 94%, 60%). The spread is drafting
