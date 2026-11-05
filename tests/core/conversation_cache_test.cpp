@@ -214,6 +214,36 @@ int main() {
         check(s.tokens == (int64_t) history.size() - 2, "SUB resumes from its last turn boundary");
     }
     {
+        // an idle batch slot parks with a chain holding only its admission's checkpoint: it must not drop the main
+        // session's parked copy that also holds the root a sibling borrows from
+        auto cp = [](std::vector<int32_t> ids) { ConversationCheckpoint c; c.ids = std::move(ids); return c; };
+        SavedConversation main_copy = image({});
+        main_copy.live.ids = {1, 2, 3, 4, 10, 11, 12};
+        main_copy.checkpoints = {cp({1, 2, 3, 4}), cp({1, 2, 3, 4, 10, 11})};
+        ConversationCache cache(1 << 20, 4);
+        check(cache.put(std::move(main_copy)), "park the main session's copy with its root and turn checkpoints");
+        const std::vector<int32_t> slot_ids{1, 2, 3, 4, 10, 11, 12, 20, 21};             // the slot decoded the reply
+        const std::vector<ConversationCheckpoint> slot_chain{cp({1, 2, 3, 4, 10, 11})};  // the admission's only one
+        check(cache.supersedes_richer(slot_ids, {}, slot_chain, true), "the slot's park would drop the root checkpoint");
+        const std::vector<ConversationCheckpoint> full_chain{cp({1, 2, 3, 4}), cp({1, 2, 3, 4, 10, 11})};
+        check(!cache.supersedes_richer(slot_ids, {}, full_chain, true), "a chain that holds both loses nothing");
+        check(!cache.supersedes_richer(slot_ids, {}, slot_chain, false), "steering mode is isolated");
+        check(!cache.supersedes_richer(std::vector<int32_t>{1, 2, 3, 4, 30, 31}, {},
+                                       std::vector<ConversationCheckpoint>{cp({1, 2, 3, 4, 30})}, true),
+              "another conversation on the same root supersedes nothing");
+        check(cache.size() == 1 && cache.superseded() == 0, "the predicate changes nothing");
+        const auto sib = cache.best(std::vector<int64_t>{1, 2, 3, 4, 40}, {}, true);
+        check(sib.tokens == 4, "a sibling still borrows the root");
+        SavedConversation slot = image({});
+        slot.live.ids = slot_ids;
+        slot.checkpoints = slot_chain;
+        cache.put_slot(std::move(slot), 8);
+        check(cache.size() == 2 && cache.superseded() == 0, "parking the slot kept the richer copy");
+        // what the ungated drop does with the slot's chain: the richer copy goes, and the slot's own with it
+        check(cache.drop_superseded(slot_ids, {}, slot_chain, true) == 2 && cache.size() == 0,
+              "ungated, the slot's chain supersedes the richer copy");
+    }
+    {
         // what is NOT superseded: another conversation sharing only the root, an entry without checkpoints, the
         // other steering mode, a branch whose deepest checkpoint the new chain does not hold
         auto cp = [](std::vector<int32_t> ids) { ConversationCheckpoint c; c.ids = std::move(ids); return c; };

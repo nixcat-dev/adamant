@@ -340,7 +340,9 @@ public:
     /// An idle batch slot's conversation, out of VRAM: kept whatever the byte budget (the caller has admitted its
     /// RAM), at most `keep` of them; the longest parked leaves first (to the tier below when spilling).
     void put_slot(SavedConversation&& image, size_t keep) {
-        drop_superseded(image.live.ids, image.live.imgs, image.checkpoints, image.cvec);
+        // a chain that would drop a richer parked copy (the root the siblings borrow) parks without dropping
+        if (!supersedes_richer(image.live.ids, image.live.imgs, image.checkpoints, image.cvec))
+            drop_superseded(image.live.ids, image.live.imgs, image.checkpoints, image.cvec);
         while (slot_count_ > 0 && slot_count_ >= keep && evict_oldest(true)) {}
         image.from_slot = true;
         const size_t n = image.bytes();
@@ -386,6 +388,30 @@ public:
         }
         superseded_ += dropped;
         return dropped;
+    }
+    // A batch slot's chain holds the one checkpoint its admission copied in, while the main session's parked copy of
+    // the same conversation keeps the whole chain - the root checkpoint among it, the one the sibling conversations
+    // borrow. Parking the slot would drop that copy as superseded (the slot's chain holds its deepest checkpoint) and
+    // the root with it, and every sibling would read the shared prefix again. True when drop_superseded(ids, images,
+    // checkpoints, cvec) would drop an entry holding a checkpoint this chain does not. Nothing is changed.
+    bool supersedes_richer(const std::vector<int32_t>& ids, const std::vector<ConversationImageKey>& images,
+                           const std::vector<ConversationCheckpoint>& checkpoints, bool cvec) const {
+        auto held = [&](const ConversationCheckpoint& c) {
+            if (c.ids == ids && c.imgs == images) return true;
+            for (const auto& k : checkpoints)
+                if (k.ids == c.ids && k.imgs == c.imgs) return true;
+            return false;
+        };
+        for (const auto& e : entries_) {
+            const ConversationCheckpoint* deepest = nullptr;
+            for (const auto& c : e.checkpoints)
+                if (!deepest || c.ids.size() > deepest->ids.size()) deepest = &c;
+            if (e.cvec != cvec || !deepest || deepest->ids.empty() || !held(*deepest))
+                continue;
+            for (const auto& c : e.checkpoints)
+                if (!held(c)) return true;
+        }
+        return false;
     }
     size_t superseded() const { return superseded_; }
 
