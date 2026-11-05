@@ -182,6 +182,8 @@ struct Options {
     /// The share (0..1) of each layer's distinct missed experts the GPU reads over PCIe from the pinned arena while the
     /// CPU computes the rest (host-planned verify windows).  Set from the startup link probe.
     double pcie_frac = -1.0;
+    /// The startup link probe's host->device reading, GB/s (the PCIe balance's link term; 0 when it failed).
+    double pcie_probe_gbps = 0.0;
     /// Every `adapt_every` rounds, swap up to `adapt_swaps` of the most-routed missing experts into the VRAM tier in
     /// place of the least-routed resident ones (decayed counts).  0 = static residency.
     int adapt_every = 4;

@@ -6,6 +6,7 @@
 #include "loans.hpp"
 #include "loan_moves.hpp"
 #include "basalt/program/options.hpp"
+#include "basalt/program/pcie_balance.hpp"
 #include "basalt/program/community_row.hpp"
 #include "basalt/kernels/cvec.hpp"
 #include "basalt/core/logit_bias.hpp"
@@ -336,6 +337,9 @@ private:
     std::vector<int32_t> prof_rank_start{};
     std::string line{};
     int64_t rounds{};
+    basalt::program::PcieBalance pcie_bal{};      // the PCIe share, fitted from the windows that ran
+    bool pcie_bal_init{};
+    Clock::time_point pcie_bal_t0{};
     std::optional<basalt::spec::SuffixDrafter> sfx;
     std::optional<basalt::spec::DraftPolicy> policy;
     static constexpr int64_t kImagePad = 248056;   // qwen4exp.ple.image_token_id: the PLE hash reads it for image cells

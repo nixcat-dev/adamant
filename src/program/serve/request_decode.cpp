@@ -575,6 +575,32 @@ Flow Request::decode() {
         }
         std::fflush(stdout);
         ++runtime_.rounds;
+        {   // the PCIe share: fitted from what the pool actually costs per missed expert (opt-in, BASALT_PCIE_BALANCE=1)
+            if (!runtime_.pcie_bal_init) {
+                const char* env = std::getenv("BASALT_PCIE_BALANCE");
+                runtime_.pcie_bal_init = true;
+                runtime_.pcie_bal.on = env != nullptr && std::strcmp(env, "1") == 0 && runtime_.o.pcie_probe_gbps > 0.0;
+                runtime_.pcie_bal.link_gbps = runtime_.o.pcie_probe_gbps;
+                runtime_.pcie_bal.blob_bytes = (double) basalt::kernels::cpu::expert_layout().max_blob;
+                runtime_.pcie_bal_t0 = Clock::now();
+                runtime_.pcie_bal.mark(0.0, runtime_.drive.d.multi_misses);
+                if (runtime_.pcie_bal.on)
+                    basalt::log::info("basalt serve", "PCIe share: %.2f from the %.1f GB/s link; the pool's cost is "
+                                 "fitted over the first decode windows", runtime_.o.pcie_frac, runtime_.o.pcie_probe_gbps);
+            } else if (runtime_.pcie_bal.on) {
+                const double ms_run = std::chrono::duration<double, std::milli>(Clock::now() - runtime_.pcie_bal_t0).count();
+                double tc = 0.0, rate = 0.0;
+                const double f = runtime_.pcie_bal.window(ms_run, runtime_.drive.d.multi_misses, runtime_.o.pcie_frac,
+                                                          &tc, &rate);
+                if (f >= 0.0) {
+                    const double was = runtime_.o.pcie_frac;
+                    runtime_.o.pcie_frac = f;
+                    runtime_.drive.d.pcie_num = std::max(0, std::min(256, (int) (f * 256.0 + 0.5)));
+                    basalt::log::info("basalt serve", "PCIe share: %.2f from the pool's %.1f GB/s (%.1f us an expert) and "
+                                 "the %.1f GB/s link (was %.2f)", f, rate, tc, runtime_.pcie_bal.link_gbps, was);
+                }
+            }
+        }
         const Clock::time_point tw2 = Clock::now();
         basalt::core::decode_gaps().mark(5);
         if (!from_sfx && e0 == 0) cum_adapt.observe(dprob.data(), T - 1, a);

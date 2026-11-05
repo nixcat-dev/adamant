@@ -309,6 +309,7 @@ int run(int argc, char** argv) {
         std::string bursts;
         const double bw = probe_pcie_h2d_gbps(&bursts);
         main_link_gbps = bw;
+        o.pcie_probe_gbps = bw;
         if (bw > 0.0) {
             o.pcie_frac = pcie_frac_for_gbps(bw, base);
             basalt::log::info("basalt generate", "PCIe probe: %.1f GB/s host->device (best of %s) -> pcie_frac %.2f "
