@@ -3,6 +3,8 @@
     python3 tools/convert/convert.py --gguf MODEL-00001-of-0000N.gguf --mmproj MMPROJ.gguf --out MODEL.basalt \\
         [--mtp-source DIR] [--mtp-dense FILE] [--draft-vocab FILE] [--name NAME] [--compat-bf16] [--no-vision] [--force]
     python3 tools/convert/convert.py --gguf MODEL-00001-of-0000N.gguf --sections-from BASE.basalt --out MODEL.basalt [--name NAME] [--force]
+    python3 tools/convert/convert.py --sections-from BASE.basalt --mtp-dense FILE --mtp-dense-index FILE \\
+        --mtp-dense-sha256 SHA256 --out MODEL.basalt [--force]
     python3 tools/convert/convert.py --sections-from BASE.basalt --checkpoint DIR --out MODEL.basalt [--dense-q8-0] [--mtp-dense FILE] \\
         [--name NAME] [--workers N] [--force]
 
@@ -12,9 +14,11 @@ Inputs
                      vocabulary must be the GGUF's); replaces --mmproj, --mtp-* and --draft-vocab
   --mmproj FILE      the vision projector GGUF (required unless --no-vision)
   --mtp-source DIR   the draft layer's BF16 tensors from `mtp_fetch.py fetch --out DIR`; without it there is no drafter
-  --mtp-dense FILE   a tuned `mtp/dense` section (raw bytes, same layout as the source; needs --mtp-source); the packs
+  --mtp-dense FILE   a tuned `mtp/dense` section (raw bytes, same layout as the source); the packs
                      with a self-distilled MTP layer carry one. Its size is checked and its SHA-256 goes to meta.mtp.
                      With --sections-from and --checkpoint it replaces the mtp/dense copied from BASE (same size required)
+  --mtp-dense-index FILE  expected index text for a dense-only --sections-from graft
+  --mtp-dense-sha256 SHA256 expected SHA-256 of dense bytes for a dense-only --sections-from graft
   --draft-vocab FILE the token subset the draft head may propose (int32 ids; needs --mtp-source)
 
 From an NVFP4 checkpoint (--sections-from with --checkpoint)
@@ -487,6 +491,128 @@ def from_checkpoint(a) -> None:
     print(f"done: {len(job.rows)} sections, {out.stat().st_size / (1 << 30):.3f} GiB, {time.time() - job.t0:.1f} s -> {out}")
 
 
+def graft_mtp_dense(a) -> None:
+    """Copy a pack, replacing its MTP dense bytes and the matching derived HC8 entries."""
+    src, tuned, expected_index, out = map(Path, (a.sections_from, a.mtp_dense, a.mtp_dense_index, a.out))
+    partial = Path(str(out) + ".partial")
+    for p in (src, tuned, expected_index):
+        if not p.is_file():
+            die(f"missing input: {p}")
+    if src.resolve() == out.resolve():
+        die("--out must differ from --sections-from")
+    if out.exists() and os.path.samefile(src, out):
+        die("--out must not refer to --sections-from")
+    if out.exists() and not a.force:
+        die(f"{out} exists (use --force to overwrite)")
+    base = ModelFile(str(src))
+    required = {"meta", "mtp/dense", "mtp/dense.index", "mtp/experts", "dense.index", "hc8"}
+    missing = sorted(required - set(base.names()))
+    if missing:
+        die(f"{src} has no required section: {', '.join(missing)}")
+    try:
+        index = expected_index.read_bytes()
+        index_tuples = dense_index_tuples(index)
+        base_tuples = dense_index_tuples(base.read("mtp/dense.index"))
+    except ValueError as e:
+        die(f"invalid dense index: {e}")
+    if index_tuples != base_tuples:
+        die(f"{expected_index} does not match {src}'s mtp/dense.index")
+    _, dense_size = base.section("mtp/dense")
+    if tuned.stat().st_size != dense_size:
+        die(f"{tuned}: {tuned.stat().st_size} bytes, {src}'s mtp/dense is {dense_size}")
+    digest = hashlib.sha256()
+    with open(tuned, "rb") as f:
+        for block in iter(lambda: f.read(1 << 24), b""):
+            digest.update(block)
+    if digest.hexdigest() != a.mtp_dense_sha256:
+        die(f"{tuned}: SHA-256 {digest.hexdigest()}, expected {a.mtp_dense_sha256}")
+    meta = json.loads(base.read("meta"))
+    if not isinstance(meta.get("mtp"), dict):
+        die(f"{src} has no MTP metadata")
+    _, hc8_size = base.section("hc8")
+    sections = {n: base.section(n) for n in base.names()}
+    with open(src, "rb") as source, open(tuned, "rb") as dense:
+        def read(name, off, size):
+            if name == "mtp/dense":
+                dense.seek(off)
+                return dense.read(size)
+            sec_off, sec_size = sections[name]
+            if off < 0 or size < 0 or off + size > sec_size:
+                raise S.ConvertError(f"{name}: read outside section")
+            source.seek(sec_off + off)
+            return source.read(size)
+        try:
+            refreshed_hc8 = H.section(read, base.read("dense.index"), base.read("mtp/dense.index"))
+            old_hc8 = H.read_table(read("hc8", 0, hc8_size))
+            new_hc8 = H.read_table(refreshed_hc8)
+        except (H.Hc8Error, S.ConvertError) as e:
+            die(f"hc8: {e}")
+    main_names = {n for n in old_hc8 if not n.startswith("mtp.")}
+    if any(old_hc8[n] != new_hc8.get(n) for n in main_names) or \
+            {n for n in new_hc8 if not n.startswith("mtp.")} != main_names:
+        die("hc8 target entries changed")
+    mtp_names = {n for n in old_hc8 if n.startswith("mtp.")}
+    if {n for n in new_hc8 if n.startswith("mtp.")} != mtp_names:
+        die("hc8 MTP entries differ")
+    partial.unlink(missing_ok=True)
+    w = ModelWriter(str(partial))
+    ok = False
+    try:
+        for name in base.names():
+            if name == "meta":
+                continue
+            if name == "mtp/dense":
+                w.add_file(name, str(tuned))
+            elif name == "hc8":
+                w.add_bytes(name, refreshed_hc8)
+            else:
+                off, size = base.section(name)
+                w.add_file(name, str(src), off, size)
+        meta["mtp"] = {**meta["mtp"], "dense": {"tuning": "self_distilled", "sha256": digest.hexdigest()}}
+        if a.name:
+            meta["name"] = a.name
+        meta["converter"] = {"tool": "tools/convert/convert.py"}
+        w.add_bytes("meta", json.dumps(meta, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+        w.close()
+        for name, _, _, section_sha in w.entries:
+            if name not in {"mtp/dense", "hc8", "meta"} and section_sha != base.sections[name][2]:
+                die(f"section {name}: copied SHA-256 differs from {src}")
+        ok = True
+    finally:
+        if not ok:
+            try:
+                w.f.close()
+            except OSError:
+                pass
+            partial.unlink(missing_ok=True)
+    os.replace(partial, out)
+    print(f"done: {len(w.entries)} sections, {out.stat().st_size / (1 << 30):.3f} GiB -> {out}")
+
+
+def dense_index_tuples(index: bytes) -> tuple[tuple[str, str, int, int, int, int], ...]:
+    """Parse the MTP dense index's name, kind, dimensions, offset and byte count."""
+    rows = []
+    names = set()
+    for line_number, line in enumerate(index.decode("utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        fields = line.split()
+        if len(fields) != 6:
+            raise ValueError(f"line {line_number}: expected six fields")
+        name, kind = fields[:2]
+        if name in names:
+            raise ValueError(f"line {line_number}: duplicate tensor {name}")
+        names.add(name)
+        try:
+            rows.append((name, kind, *(int(v, 10) for v in fields[2:])))
+        except ValueError:
+            raise ValueError(f"line {line_number}: dimensions and offsets must be decimal integers") from None
+    if not rows:
+        raise ValueError("no tensor rows")
+    return tuple(sorted(rows))
+
+
 def requant_dense(a) -> None:
     """BASE with its Q8_0 dense projections written as Q6_K; every other section and tensor is copied byte for byte."""
     import multiprocessing
@@ -576,6 +702,8 @@ def main():
     ap.add_argument("--out", required=True, help="the .basalt file to write")
     ap.add_argument("--mtp-source", metavar="DIR", help="the drafter's BF16 tensors written by tools/convert/mtp_fetch.py fetch")
     ap.add_argument("--mtp-dense", metavar="FILE", help="a tuned (self-distilled) mtp/dense section to embed (needs --mtp-source)")
+    ap.add_argument("--mtp-dense-index", metavar="FILE", help="expected mtp/dense.index for a dense-only --sections-from graft")
+    ap.add_argument("--mtp-dense-sha256", metavar="SHA256", help="expected SHA-256 for a dense-only --sections-from graft")
     ap.add_argument("--draft-vocab", metavar="FILE", help="int32 token ids the draft head may propose (needs --mtp-source)")
     ap.add_argument("--name")
     ap.add_argument("--compat-bf16", action="store_true",
@@ -597,7 +725,7 @@ def main():
         requant_dense(a)
         return
     if a.sections_from and a.checkpoint:
-        if a.gguf or a.mmproj or a.mtp_source or a.draft_vocab:
+        if a.gguf or a.mmproj or a.mtp_source or a.draft_vocab or a.mtp_dense_index or a.mtp_dense_sha256:
             ap.error("--checkpoint with --sections-from takes only --out, --name, --mtp-dense, --dense-q8-0, --workers and --force")
         if not Path(a.checkpoint).is_dir():
             ap.error(f"missing input: {a.checkpoint}")
@@ -605,6 +733,15 @@ def main():
             ap.error(f"missing input: {a.mtp_dense}")
         from_checkpoint(a)
         return
+    if a.sections_from and a.mtp_dense:
+        if a.gguf or a.mmproj or a.mtp_source or a.draft_vocab or a.no_vision or a.checkpoint or a.dense_q8_0:
+            ap.error("dense-only --sections-from takes only --mtp-dense-index, --mtp-dense-sha256, --out, --name and --force")
+        if not a.mtp_dense_index or not a.mtp_dense_sha256:
+            ap.error("dense-only --sections-from needs --mtp-dense-index and --mtp-dense-sha256")
+        graft_mtp_dense(a)
+        return
+    if a.mtp_dense_index or a.mtp_dense_sha256:
+        ap.error("--mtp-dense-index and --mtp-dense-sha256 need --sections-from and --mtp-dense")
     if a.dense_q8_0:
         ap.error("--dense-q8-0 needs --checkpoint and --sections-from")
     if not a.gguf:

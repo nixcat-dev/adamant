@@ -14,6 +14,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(BUILD_TESTING "Build the tests and parity programs" OFF)
+find_package(Python3 COMPONENTS Interpreter QUIET)
 # Covers the project's own C++ and CUDA sources only; off by default so a newer compiler's new warning cannot break a user build.
 option(WERROR "Treat compiler warnings as errors" OFF)
 if(BUILD_TESTING)
@@ -623,6 +624,18 @@ if(BASALT_GRAMMAR_MODEL AND Python3_Interpreter_FOUND)
   set_tests_properties(grammar_engine_test PROPERTIES TIMEOUT 900)
 endif()
 
+# fixed-text PPL timing replay, including grammar and relaxed-drafting requests
+if(BASALT_PPL_MODEL AND Python3_Interpreter_FOUND)
+  if(NOT BASALT_PPL_BASE)
+    set(BASALT_PPL_BASE "-")
+  endif()
+  add_test(NAME ppl_force_grammar_test
+           COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/program/ppl_force_grammar_test.py
+                   $<TARGET_FILE:basalt> ${BASALT_PPL_MODEL} ${BASALT_PPL_BASE} ${BASALT_PPL_ARGS})
+  set_property(TEST ppl_force_grammar_test APPEND PROPERTY LABELS gpu)
+  set_tests_properties(ppl_force_grammar_test PROPERTIES TIMEOUT 900)
+endif()
+
 # grammar requests under --batch: each slot held to its own grammar (starts the server on a model pack, same
 # -DBASALT_GRAMMAR_MODEL, with python3; -DBASALT_GRAMMAR_BATCH_ARGS=<server args>)
 if(BASALT_GRAMMAR_MODEL AND Python3_Interpreter_FOUND)
@@ -654,7 +667,6 @@ basalt_embed_manifest(iq_parity)
 # and the repository's vendored gguf-py (no pip installs); it writes deterministic fixtures into the
 # BUILD directory (the source tree is not touched).  The CTest fixture makes generation-to-test order
 # explicit even under parallel execution; a fixture-generation failure fails iq_parity with it.
-find_package(Python3 COMPONENTS Interpreter QUIET)
 
 # appending a community row to docs/community/benchmarks.json: formatting cases, and a byte comparison with
 # tools/check_benchmarks.py --fix (python3)

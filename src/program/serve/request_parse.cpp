@@ -32,10 +32,12 @@ Flow Request::parse() {
     req_gprompt = -1;       // gprompt=N: the first N ids are the prompt, the rest tokens the request has already generated
     req_cvec = 1;   // cvec=0|1: a loaded control vector for this request (on when absent)
     req_relax = runtime_.o.relaxed_drafting;   // relax=P: this request's --relaxed-drafting (0 = exact)
-    // ppl=K [ppl_t=T]: quality gate (basalt/program/ppl_gate.hpp) - chunk K of --ppl-base, the rest of
-    // the chunk teacher-forced through verify windows of T tokens, every token committed
+    // ppl=K [ppl_t=T]: quality gate (basalt/program/ppl_gate.hpp); ppl_score=0 skips row scoring for timing,
+    // ppl_force=1 times natural draft windows judged against the stored continuation
     req_ppl = -1;
     req_ppl_t = 3;
+    req_ppl_score = 1;
+    req_ppl_force = 0;
     req_clip = 0;   // clip=1 (GENT): max_new is a cap, cut to the room the context leaves after the prompt
     if (endp != nullptr) {   // GENI takes the same keys (image requests were always greedy); its
                              // embedding file path is the first token without an =
@@ -66,6 +68,8 @@ Flow Request::parse() {
             else if (key == "clip") req_clip = std::atoi(tok.c_str() + eq + 1);
             else if (key == "ppl") req_ppl = std::atoi(tok.c_str() + eq + 1);
             else if (key == "ppl_t") req_ppl_t = std::atoi(tok.c_str() + eq + 1);
+            else if (key == "ppl_score") req_ppl_score = std::atoi(tok.c_str() + eq + 1);
+            else if (key == "ppl_force") req_ppl_force = std::atoi(tok.c_str() + eq + 1);
             // unknown keys are skipped: the ids start at the first token without '='
         }
     }
