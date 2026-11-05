@@ -159,9 +159,8 @@ uint64_t available_memory() {
 }
 
 uint64_t ram_margin() {
-    uint64_t avail = 0, total = 0;
-    memory_status(avail, total);
-    return std::max<uint64_t>(2ull << 30, total / 20);
+    // The memory guard's floor: 1024 MiB of RAM left alone.
+    return 1024ull << 20;
 }
 #else
 namespace {
@@ -179,7 +178,8 @@ uint64_t meminfo_bytes(const char* key) {
 uint64_t available_memory() { return meminfo_bytes("MemAvailable"); }
 
 uint64_t ram_margin() {
-    return std::max<uint64_t>(2ull << 30, meminfo_bytes("MemTotal") / 20);
+    // The memory guard's floor: 1024 MiB of RAM left alone.
+    return 1024ull << 20;
 }
 #endif
 

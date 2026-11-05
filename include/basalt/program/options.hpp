@@ -74,7 +74,9 @@ struct Options {
     /// page-locked when the driver allows (else locked in the working set), the RAM margin as headroom, and plain mmap
     /// (with a warning) when even the experts no slot holds do not fit.
     bool resident_pin = false;
-    uint64_t resident_headroom = 8ull << 30;
+    /// RAM left free beside the resident copy: the RAM floor, 1024 MiB (the same floor the memory guard
+    /// keeps), so a box that can hold the experts holds all of them.
+    uint64_t resident_headroom = 1024ull << 20;
     bool resident_soft = false;
     bool resident_cpu_explicit = false;   // --resident-cpu-experts given by itself (not only implied)
     /// CS-T `--resident-budget-gib N`: the resident mode with a RAM budget - the N GiB of experts the GPU cache does
