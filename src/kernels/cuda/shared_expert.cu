@@ -108,8 +108,13 @@ void shared_expert_multi(int n_tok, const float* x, const NativeSharedWeights& n
     cudaStream_t cs = (cudaStream_t) stream;
     native_quantize_q8_1(x, nw.q8_1, (int) n_embd, n_tok, stream);
     const void* x_q8_1 = nw.q8_1;
-    native_mmvq(nw.gate_type, nw.gate_data, x_q8_1, gate, (int) n_embd, (int) n_ff, n_tok, stream);
-    native_mmvq(nw.up_type, nw.up_data, x_q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream);
+    const bool paired = nw.gate_type == nw.up_type &&
+                        native_mmvq_pair(nw.gate_type, nw.gate_data, nw.up_data, x_q8_1,
+                                         gate, up, (int) n_embd, (int) n_ff, n_tok, stream);
+    if (!paired) {
+        native_mmvq(nw.gate_type, nw.gate_data, x_q8_1, gate, (int) n_embd, (int) n_ff, n_tok, stream);
+        native_mmvq(nw.up_type, nw.up_data, x_q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream);
+    }
     native_swiglu_quantize_q8_1(gate, up, nw.q8_1, (int) n_ff, n_tok, stream);
     native_mmvq(nw.down_type, nw.down_data, nw.q8_1, out, (int) n_ff, (int) n_embd, n_tok, stream);
     if (n_tok > 1) {   // one gemv for all rows (outputs identical), fused sigmoid+scale
@@ -131,13 +136,18 @@ void shared_expert_multi_rows(int n_tok, const NativeSharedWeights& nw, float* g
         (stream2 != nullptr && join == nullptr))
         throw std::invalid_argument("shared_expert_multi_rows: needs 1..8 tokens, native weights, rows and a stream");
     cudaStream_t cs = (cudaStream_t) stream;
-    native_mmvq(nw.gate_type, nw.gate_data, nw.q8_1, gate, (int) n_embd, (int) n_ff, n_tok, stream);
-    if (stream2 != nullptr) {
-        native_mmvq(nw.up_type, nw.up_data, nw.q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream2);
-        cudaEventRecord((cudaEvent_t) join, (cudaStream_t) stream2);
-        cudaStreamWaitEvent(cs, (cudaEvent_t) join, 0);
-    } else {
-        native_mmvq(nw.up_type, nw.up_data, nw.q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream);
+    const bool paired = stream2 == nullptr && nw.gate_type == nw.up_type &&
+                        native_mmvq_pair(nw.gate_type, nw.gate_data, nw.up_data, nw.q8_1,
+                                         gate, up, (int) n_embd, (int) n_ff, n_tok, stream);
+    if (!paired) {
+        native_mmvq(nw.gate_type, nw.gate_data, nw.q8_1, gate, (int) n_embd, (int) n_ff, n_tok, stream);
+        if (stream2 != nullptr) {
+            native_mmvq(nw.up_type, nw.up_data, nw.q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream2);
+            cudaEventRecord((cudaEvent_t) join, (cudaStream_t) stream2);
+            cudaStreamWaitEvent(cs, (cudaEvent_t) join, 0);
+        } else {
+            native_mmvq(nw.up_type, nw.up_data, nw.q8_1, up, (int) n_embd, (int) n_ff, n_tok, stream);
+        }
     }
     native_swiglu_quantize_q8_1(gate, up, nw.q8_1, (int) n_ff, n_tok, stream);
     native_mmvq(nw.down_type, nw.down_data, nw.q8_1, out, (int) n_ff, (int) n_embd, n_tok, stream);
