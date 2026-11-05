@@ -37,7 +37,8 @@ from serve.engine.errors import EngineDied, EngineError, EngineSilent, EngineSta
 from serve.engine.slots import AdmissionQueue
 from serve.prompt import PromptText
 from serve.util.console import tagged
-from serve.engine.progress import narrate_start, server_line, start_errors, start_failure_hint, start_last_line
+from serve.engine.progress import (engine_crashed, engine_exit_words, narrate_start, server_line, start_errors,
+                                   start_exit_note, start_failure_hint, start_last_line)
 
 
 # A running request whose engine prints nothing for this long is out of step: the engine is ended and the request
@@ -323,7 +324,12 @@ class ProcessEngine:
                 reason = "; ".join(dict.fromkeys(errors))
             else:
                 reason = start_last_line(log, log_start) or "the engine exited before it was ready"
-            raise EngineStartError(reason + start_failure_hint(log, log_start), log)
+            err = EngineStartError(reason + ("" if timed_out else start_exit_note(self.proc.returncode)) +
+                                   start_failure_hint(log, log_start), log)
+            if not timed_out:                              # timed_out: the kill is ours, not the system's end
+                err.exit_words = engine_exit_words(self.proc.returncode)
+                err.crashed = engine_crashed(self.proc.returncode)
+            raise err
         self.known_ctx = self.max_context   # survives a failed restart
         # an engine's own version (INFO engine=) beats the BUILD.json fallback
         if self.info.get("engine"):
@@ -466,16 +472,20 @@ class ProcessEngine:
                 try:
                     self.__init__(*self.spawn)
                     break
-                except EngineStartError:
+                except EngineStartError as e:
                     if self.proc is None:               # the program could not be started: a retry cannot help
                         raise
                     try:
                         self.proc.wait(timeout=60)
                     except (subprocess.TimeoutExpired, OSError):
                         pass
+                    if getattr(e, "crashed", False):    # the system ended it: a second try repeats the crash
+                        raise
                     if i == tries - 1:
                         raise
-                    print(f"[server] warning: the engine did not start (try {i + 1} of {tries}), retrying in "
+                    words = getattr(e, "exit_words", "")
+                    print(f"[server] warning: the engine did not start"
+                          f"{f' ({words})' if words else ''} (try {i + 1} of {tries}), retrying in "
                           f"{self.RESTART_RETRY_S:g} s", flush=True)
                     time.sleep(self.RESTART_RETRY_S)
         finally:
