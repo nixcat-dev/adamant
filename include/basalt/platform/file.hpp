@@ -59,6 +59,10 @@ bool path_executable(const std::string& path);
 /// This executable's own path, as the OS knows it; empty when the OS does not say.
 std::string module_path();
 
+/// The directory holding this executable, with no trailing separator; empty when `module_path()` is. A release keeps
+/// its own data beside the binary (`bin/`, `data/`), so this is where data a source build reads from its tree lives.
+std::string module_dir();
+
 /// The directory for scratch files, with no trailing separator: the system's temp directory on Windows, /tmp on
 /// Linux. Never empty; where the OS cannot name one it says ".".
 std::string temp_dir();

@@ -124,6 +124,13 @@ std::string module_path() {
     return to_utf8(exe);
 }
 
+std::string module_dir() {
+    const std::string path = module_path();
+    if (path.empty()) return std::string();
+    const size_t cut = path.find_last_of("\\/");
+    return cut == std::string::npos ? std::string() : path.substr(0, cut);
+}
+
 std::string temp_dir() {
     wchar_t dir[MAX_PATH];
     const DWORD cap = (DWORD) (sizeof dir / sizeof dir[0]);
@@ -286,6 +293,13 @@ std::string module_path() {
     if (n <= 0) return std::string();
     exe[n] = 0;
     return std::string(exe);
+}
+
+std::string module_dir() {
+    const std::string path = module_path();
+    if (path.empty()) return std::string();
+    const size_t cut = path.find_last_of("/");
+    return cut == std::string::npos ? std::string() : path.substr(0, cut);
 }
 
 std::string temp_dir() {

@@ -29,12 +29,22 @@ int run(int argc, char** argv) {
         // the source tensors (embedding, PLE table, native projections, head) are served through the GGUF view of the file
         o.native_shards = {o.model};
         if (!srcs.mtp_dense.empty() && !srcs.mtp_dense_index.empty() && !srcs.mtp_experts.empty()) o.mtp = o.model;
-        // the engine's expert profile for this model, when it has one
+        // the engine's expert profile for this model, when it has one: a release keeps data/ beside bin/, a source
+        // build reads the tree it came from
         const std::string key = cli::profile_key(model_file.meta());
-        const std::string prof = std::string(BASALT_SOURCE_DIR) + "/data/profiles/" + key + ".prof";
+        const std::string name = "/data/profiles/" + key + ".prof";
+        const std::string beside = basalt::platform::module_dir();
+        std::vector<std::string> candidates;
+        if (!key.empty() && !beside.empty()) candidates.push_back(beside + "/.." + name);
+        if (!key.empty()) candidates.push_back(std::string(BASALT_SOURCE_DIR) + name);
         uint64_t prof_bytes = 0;
-        if (!key.empty() && basalt::platform::file_size(prof, prof_bytes) && prof_bytes > 0) o.expert_profile = prof;
-        else basalt::log::info("basalt generate", "no expert profile for %s", key.empty() ? "this model" : key.c_str());
+        for (const std::string& prof : candidates)
+            if (basalt::platform::file_size(prof, prof_bytes) && prof_bytes > 0) {
+                o.expert_profile = prof;
+                break;
+            }
+        if (o.expert_profile.empty())
+            basalt::log::info("basalt generate", "no expert profile for %s", key.empty() ? "this model" : key.c_str());
         // the 8-bit hyper-connection copies
         std::map<std::string, basalt::core::Hc8Copy> table;
         if (!basalt::core::hc8_read(srcs.hc8, table, merr)) {
