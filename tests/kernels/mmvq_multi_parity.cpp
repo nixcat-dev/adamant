@@ -244,7 +244,7 @@ bool pair_case(int type, int n_in, int n_out, int ncols, cudaStream_t stream) {
     const std::size_t qcol_bytes = k::native_q8_1_bytes(n_in, 1);
     const std::size_t qbytes = k::native_q8_1_bytes(n_in, ncols);
     const std::size_t output_count = std::size_t(ncols) * n_out;
-    std::mt19937 rng(0x73a1u + (unsigned)type * 31u + (unsigned)ncols * 7u + (unsigned)n_out);
+    std::mt19937 rng(0x73a1u + (unsigned)type * 31u + (unsigned)n_out);
     std::vector<uint8_t> wa(weight_bytes), wb(weight_bytes);
     for (uint8_t& value : wa) value = (uint8_t)rng();
     for (uint8_t& value : wb) value = (uint8_t)rng();
@@ -257,6 +257,8 @@ bool pair_case(int type, int n_in, int n_out, int ncols, cudaStream_t stream) {
     std::normal_distribution<float> normal(0.0f, 0.7f);
     std::vector<float> x(std::size_t(ncols) * n_in);
     for (float& value : x) value = normal(rng);
+    if (ncols > 1)
+        std::copy_n(x.begin(), n_in, x.begin() + std::size_t(ncols - 1) * n_in);
 
     void *dwa = nullptr, *dwb = nullptr, *dxq = nullptr;
     float* dx = nullptr;
@@ -320,6 +322,44 @@ bool pair_case(int type, int n_in, int n_out, int ncols, cudaStream_t stream) {
     const uint32_t guard = 0xa5a5a5a5u;
     bool parity = true;
     double max_abs_cpu = 0.0, max_rel_cpu = 0.0;
+    static int frozen_type = 0;
+    static int frozen_n_in = 0;
+    static int frozen_n_out = 0;
+    static std::vector<uint8_t> frozen_q;
+    static std::vector<float> frozen_a, frozen_b;
+    const bool track_positions = n_in == 2560 && n_out == 640;
+    bool same_row_position = true;
+    if (track_positions && ncols == 1) {
+        frozen_type = type;
+        frozen_n_in = n_in;
+        frozen_n_out = n_out;
+        frozen_q.assign(host_q.begin(), host_q.begin() + qcol_bytes);
+        frozen_a.assign(single_a.begin() + 1, single_a.begin() + 1 + n_out);
+        frozen_b.assign(single_b.begin() + 1, single_b.begin() + 1 + n_out);
+    }
+    if (track_positions && ncols > 1) {
+        const bool have_frozen = frozen_type == type && frozen_n_in == n_in && frozen_n_out == n_out &&
+                                 frozen_q.size() == qcol_bytes && frozen_a.size() == std::size_t(n_out) &&
+                                 frozen_b.size() == std::size_t(n_out);
+        same_row_position = have_frozen;
+        if (have_frozen) {
+            const std::size_t last_q = std::size_t(ncols - 1) * qcol_bytes;
+            same_row_position = same_row_position &&
+                                std::memcmp(host_q.data(), frozen_q.data(), qcol_bytes) == 0 &&
+                                std::memcmp(host_q.data() + last_q, frozen_q.data(), qcol_bytes) == 0;
+            for (int row = 0; row < n_out; ++row) {
+                for (int token : {0, ncols - 1}) {
+                    const std::size_t at = std::size_t(token) * n_out + row + 1;
+                    same_row_position = same_row_position &&
+                                        std::memcmp(&single_a[at], &frozen_a[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&single_b[at], &frozen_b[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&pair_a[at], &frozen_a[row], sizeof(float)) == 0 &&
+                                        std::memcmp(&pair_b[at], &frozen_b[row], sizeof(float)) == 0;
+                }
+            }
+        }
+    }
+    parity = parity && same_row_position;
     for (const auto* values : {&base_a, &base_b, &pair_a, &pair_b, &single_a, &single_b}) {
         uint32_t first = 0, last = 0;
         std::memcpy(&first, values->data(), sizeof(first));
@@ -369,9 +409,11 @@ bool pair_case(int type, int n_in, int n_out, int ncols, cudaStream_t stream) {
             }
         }
     }
-    std::printf("native_mmvq_pair: type=%s N=%d M=%d T=%d %s previous_max_abs=0 previous_max_rel=0 "
+    std::printf("native_mmvq_pair: type=%s N=%d M=%d T=%d %s same_row_position=%s "
+                "previous_max_abs=0 previous_max_rel=0 "
                 "cpu_max_abs=%.3e cpu_max_rel=%.3e\n",
                 type == 8 ? "Q8_0" : "Q6_K", n_in, n_out, ncols, parity ? "PASS" : "FAIL",
+                track_positions && ncols > 1 ? (same_row_position ? "PASS" : "FAIL") : "n/a",
                 max_abs_cpu, max_rel_cpu);
     cudaFree(dwa); cudaFree(dwb); cudaFree(dx); cudaFree(dxq); cudaFree(d_base_a); cudaFree(d_base_b);
     cudaFree(d_pair_a); cudaFree(d_pair_b); cudaFree(d_single_a); cudaFree(d_single_b);
