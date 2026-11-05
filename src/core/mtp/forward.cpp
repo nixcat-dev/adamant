@@ -251,7 +251,9 @@ bool MtpDrafter::record_forward(int T, int step_row0, cudaStream_t cs, std::stri
         if (sh_par) fork(cs);
         for (int t = 0; t < T && !routed; ++t) {
             bf16_gemv_fp32_mmvf(mixed_ + t * N, bf16("mlp.gate.weight"), logits_ + t * g.n_expert, (int) N, (int) g.n_expert, cs);
-            native_router_top10(logits_ + t * g.n_expert, ids_ + t * K, w_ + t * K, cs);
+            // the native fused router reads 512 experts a row: a pruned variant takes the generic top-k kernel
+            if (g.n_expert == 512 && K == 10) native_router_top10(logits_ + t * g.n_expert, ids_ + t * K, w_ + t * K, cs);
+            else router_top10(logits_ + t * g.n_expert, 1, (int) g.n_expert, (int) K, ids_ + t * K, w_ + t * K, cs);
         }
         moe_group_resident(ids_, (int) (T * K), (int) K, experts_, (int64_t) basalt::kernels::cpu::BLOB, grp_ptr_,
                            grp_start_, grp_counts_, hit_dst_, hit_slot_, cs);
