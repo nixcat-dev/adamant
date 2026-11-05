@@ -171,7 +171,7 @@ struct MmqBufs {
 // with rows: the timing part's layout), the cost of MMQ's own kernels alone
 void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const Routing& r, const float* x_dev,
              const int32_t* src_dev, const std::vector<const uint8_t*>& blob, int64_t rows, cudaStream_t s,
-             bool direct = false, size_t stride = 0) {
+             bool direct = false, size_t stride = 0, bool arithmetic_ids = false, bool grouped_gather = false) {
     const size_t gub = mmq::matrix_bytes(p.gu, 1280, N), db = mmq::matrix_bytes(p.d, N, FF);
     const int E = (int) r.cnt.size();
     std::vector<int32_t> order;
@@ -184,14 +184,28 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         for (size_t i = 0; i <= GROUP; ++i)
             bh[n + 1 + g * (GROUP + 1) + i] = bh[std::min(n, g * GROUP + i)] - bh[g * GROUP];
     ck(cudaMemcpyAsync(b.bounds.p, bh.data(), bh.size() * 4, cudaMemcpyHostToDevice, s), "bounds");
-    mmq::iota(b.ident.as<int32_t>(), rows, s);
+    if (!arithmetic_ids) mmq::iota(b.ident.as<int32_t>(), rows, s);
     mmq::quantize(x_dev, src_dev, b.xq.p, (int) p.gu, N, N, rows, s);
     for (size_t j = 0; j < n; ++j) {
         const size_t q = j % GROUP;
         const uint8_t* bl = blob[(size_t) order[j]];
-        if (!direct)
-            mmq::gather_native(bl, bl + geo.up_off, gub / 2, bl + geo.down_off, db, b.grp_gu.as<uint8_t>() + q * gub,
-                               b.grp_d.as<uint8_t>() + q * db, s);
+        if (!direct && grouped_gather && q == 0) {
+            mmq::GatherGroup group;
+            group.n = (int) std::min((size_t) GROUP, n - j);
+            for (int i = 0; i < group.n; ++i) group.blob[i] = blob[(size_t) order[j + (size_t) i]];
+            if (!mmq::gather_native_group(group, geo.up_off, gub / 2, geo.down_off, db,
+                    b.grp_gu.as<uint8_t>(), gub, b.grp_d.as<uint8_t>(), db, s)) {
+                for (int i = 0; i < group.n; ++i) {
+                    const uint8_t* src = group.blob[i];
+                    mmq::gather_native(src, src + geo.up_off, gub / 2, src + geo.down_off, db,
+                                       b.grp_gu.as<uint8_t>() + (size_t) i * gub,
+                                       b.grp_d.as<uint8_t>() + (size_t) i * db, s);
+                }
+            }
+        } else if (!direct && !grouped_gather) {
+            mmq::gather_native(bl, bl + geo.up_off, gub / 2, bl + geo.down_off, db,
+                               b.grp_gu.as<uint8_t>() + q * gub, b.grp_d.as<uint8_t>() + q * db, s);
+        }
         if (q + 1 < GROUP && j + 1 < n) continue;
         const size_t j0 = j - q, g = j0 / GROUP;
         const int ngx = (int) (q + 1);
@@ -206,7 +220,8 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         mmq::Product gu;
         gu.w = direct ? (const void*) b0 : b.grp_gu.p; gu.type = (int) p.gu; gu.w_rows = 1280; gu.w_cols = N;
         gu.expert_bytes = direct ? stride : gub;
-        gu.n = ngx; gu.xq = b.xq.p; gu.bounds = b.bounds.as<int32_t>() + j0; gu.ids = b.ident.as<int32_t>();
+        gu.n = ngx; gu.xq = b.xq.p; gu.bounds = b.bounds.as<int32_t>() + j0;
+        gu.ids = arithmetic_ids ? nullptr : b.ident.as<int32_t>();
         gu.total_rows = rows; gu.max_rows = maxr; gu.dst = b.gu.as<float>(); gu.ld_dst = 1280;
         ctx.run(gu, s);
         mmq::swiglu(b.gu.as<float>() + r0 * 1280, b.h.as<float>() + r0 * FF, nr, FF, false, s);
@@ -215,7 +230,8 @@ void run_mmq(const Pair& p, const Geo& geo, mmq::Context& ctx, MmqBufs& b, const
         dn.w = direct ? (const void*) (b0 + geo.down_off) : b.grp_d.p; dn.type = (int) p.d; dn.w_rows = N; dn.w_cols = FF;
         dn.expert_bytes = direct ? stride : db;
         dn.n = ngx; dn.xq = b.hq.p; dn.bounds = b.bounds.as<int32_t>() + n + 1 + g * (GROUP + 1);
-        dn.ids = b.ident.as<int32_t>(); dn.total_rows = nr; dn.max_rows = maxr; dn.dst = b.dm.as<float>() + r0 * N;
+        dn.ids = arithmetic_ids ? nullptr : b.ident.as<int32_t>();
+        dn.total_rows = nr; dn.max_rows = maxr; dn.dst = b.dm.as<float>() + r0 * N;
         dn.ld_dst = N;
         ctx.run(dn, s);
     }
@@ -315,6 +331,22 @@ void reference_part(const Pair& p, cudaStream_t s) {
     mmq::Context ctx;
     MmqBufs mb(p, rows, E);
     run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s);
+    ck(cudaStreamSynchronize(s), "MMQ mapped scatter");
+    const std::vector<float> y_mmq_mapped = download(mb.dm, (size_t) rows * N);
+    run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+            false, 0, true);
+    ck(cudaStreamSynchronize(s), "MMQ arithmetic scatter");
+    const std::vector<float> y_mmq = download(mb.dm, (size_t) rows * N);
+    if (std::memcmp(y_mmq_mapped.data(), y_mmq.data(), y_mmq.size() * sizeof(float)) != 0)
+        throw std::runtime_error(std::string(p.name) + ": arithmetic identity scatter differs from mapped output");
+    std::printf("  mapped vs arithmetic identity scatter: bitwise identical\n");
+    run_mmq(p, geo, ctx, mb, r, x_dev.as<float>(), src_dev.as<int32_t>(), blob, rows, s,
+            false, 0, false, true);
+    ck(cudaStreamSynchronize(s), "MMQ grouped gather");
+    const std::vector<float> y_mmq_grouped = download(mb.dm, (size_t) rows * N);
+    if (std::memcmp(y_mmq_mapped.data(), y_mmq_grouped.data(), y_mmq.size() * sizeof(float)) != 0)
+        throw std::runtime_error(std::string(p.name) + ": grouped gather differs from per-expert gather");
+    std::printf("  per-expert vs grouped gather: bitwise identical\n");
     FusedBufs fb(T, rows, E);
     ck(cudaMemcpy(fb.ids.p, ids.data(), ids.size() * 4, cudaMemcpyHostToDevice), "ids");
     ck(cudaMemset(fb.dm.p, 0xff, (size_t) rows * N * 4), "sentinel");   // an unwritten row is NaN
@@ -322,7 +354,7 @@ void reference_part(const Pair& p, cudaStream_t s) {
     fused::native_v2_override(0);   // the fused arm is the native kernels; v2 is forced on below
     run_fused(p, geo, fb, x_dev.as<float>(), T, E, {0, 1, 20, E}, blob, s);
     ck(cudaStreamSynchronize(s), "sync");
-    const std::vector<float> y_mmq = download(mb.dm, (size_t) rows * N), y_f = download(fb.dm, (size_t) rows * N);
+    const std::vector<float> y_f = download(fb.dm, (size_t) rows * N);
     const std::vector<int32_t> slot = download_i(fb.slot, (size_t) rows), fsrc = download_i(fb.src, (size_t) rows);
     for (int64_t i = 0; i < rows; ++i)
         if (fsrc[(size_t) slot[(size_t) i]] != (int32_t) (i / K)) throw std::runtime_error("group: slot/src disagree");

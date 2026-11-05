@@ -206,13 +206,9 @@ struct Prefill::Run::Chunk::Experts::Group {
     int stage_next = 0;
     std::vector<int> stage_of, job_of;
     Chunk::StagerDone stager_done{nullptr};
-    // In the streamed walk an MMQ group is gathered in ONE launch, after ONE wait on its last
-    // streamed copy (the copy stream is in order), and its ring slots are released by ONE event.  A
-    // wait and a record per expert would put a GPU bubble each on the compute stream.  The same bytes into the same group slots.  A ring
-    // entry the routing skipped inside an open group first gathers what the group holds so far
-    // (`flush`), so no more than a group's entries are ever held back from the issuer.
-    const bool group_gather = stream_all && use_mmq && lay.native &&
-                              MMQ_GROUP <= mmq::kGatherGroupMax;
+    // An MMQ group is gathered in one launch after its last streamed copy. Its slots share one
+    // completion event. A skipped ring entry first flushes any open group.
+    const bool group_gather = use_mmq && lay.native && MMQ_GROUP <= mmq::kGatherGroupMax;
     mmq::GatherGroup gg;
     int gg_slots[MMQ_GROUP];
     int gg_nslots = 0;   // ring slots gathered by the next flush
