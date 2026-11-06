@@ -207,11 +207,13 @@ Flow Request::complete() {
     else
         std::snprintf(read_txt, sizeof(read_txt), "%lld", (long long) fresh);
     basalt::log::info("basalt serve", "prompt %lld tokens = %lld reused + %s read in %.0f ms (%.1f tok/s), "
-                         "%lld generated in %.0f ms (%.1f tok/s), drafts accepted %lld of %lld, %zu checkpoints%s",
+                         "%lld generated in %.0f ms (%.1f tok/s), drafts accepted %lld of %lld, %zu checkpoints, "
+                         "%lld file blobs in the read%s",
                  (long long) n, (long long) resume, read_txt, prompt_ms,
                  prompt_ms > 0 ? 1000.0 * read_n / prompt_ms : 0.0, (long long) produced_n, decode_ms,
                  decode_ms > 0 ? 1000.0 * produced_n / decode_ms : 0.0, (long long) draft_accepted,
-                 (long long) draft_offered, runtime_.checks.size(), cancelled ? " (cancelled)" : "");
+                 (long long) draft_offered, runtime_.checks.size(),
+                 (long long) (runtime_.src.file_reads() - files_req0), cancelled ? " (cancelled)" : "");
     if (relax_on)
         basalt::log::info("basalt serve", "relaxed drafting %.2f: %lld of the %lld accepted drafts were kept by it",
                      (double) req_relax, (long long) relaxed_kept, (long long) draft_accepted);

@@ -163,6 +163,7 @@ private:
     int64_t noplace0{};
     int64_t ram0{};
     int64_t files0{};
+    int64_t files_req0{};   ///< file reads before this request read its prompt (the prompt phase's base)
     uint64_t file_bytes0{};
     int64_t decode_look0{};
     int64_t offload0{};

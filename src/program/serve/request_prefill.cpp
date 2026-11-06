@@ -5,6 +5,7 @@ namespace basalt::program::serve {
 
 Flow Request::read_prompt() {
     ov_copied = false;
+    files_req0 = runtime_.src.file_reads();   // the prompt phase's base: what this read costs from the file
 
     batch_fatal = false;
     il_parts = 0;   // the slots' windows run between this prompt's chunks

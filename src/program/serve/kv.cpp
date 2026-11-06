@@ -310,6 +310,7 @@ bool Runtime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::string& 
             add = (int64_t) basalt::core::session_kv_grow_bytes(s, cells);
         }
     }
+    int64_t displaced = 0, with_home = 0, routed_no_home = 0;   // what this move costs: see the line below
     if (add > room && xcache.segmented()) {
         // whole tail segments: everything from the first one at or past `keep` goes
         const int64_t gran = (int64_t) std::max<uint64_t>(basalt::core::vmm::granularity(), 1);
@@ -326,6 +327,13 @@ bool Runtime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::string& 
                 vram_evicted.emplace_back((int32_t) i, host_res[i]);
                 host_res[i] = basalt::core::kNotResident;
                 off.push_back((int32_t) i);
+                ++displaced;
+                const int64_t l = (int64_t) i / g.n_expert, ex = (int64_t) i % g.n_expert;
+                if (src.complement_ready() && src.has_resident(l, ex)) {
+                    ++with_home;
+                } else if (!drive.d.usage.empty() && drive.d.usage[i] > 0.0f) {
+                    ++routed_no_home;
+                }
             }
         res_upload();
         relend();
@@ -337,9 +345,10 @@ bool Runtime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::string& 
     if (parked > 0 && !cache_regrow(e)) return false;   // the rest of what they held is the cache's again
     ++kv_moves;
     basalt::log::info("basalt serve", "elastic KV: %lld cells backed (+%.0f MiB), the expert cache %lld -> %lld "
-                         "slots, in %.1f ms", (long long) basalt::core::session_kv_cells(s),
-                 (double) add / 1048576.0, (long long) before, (long long) xcache.slots(),
-                 std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+                         "slots, %lld experts displaced (%lld with a RAM copy, %lld routed of the rest), in %.1f ms",
+                 (long long) basalt::core::session_kv_cells(s), (double) add / 1048576.0, (long long) before,
+                 (long long) xcache.slots(), (long long) displaced, (long long) with_home,
+                 (long long) routed_no_home, std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
     return true;
 }
 
