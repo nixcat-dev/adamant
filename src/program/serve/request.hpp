@@ -92,10 +92,9 @@ private:
     bool ov_copied{};
     // --batch: a prompt read while slots are decoding goes one prompt chunk at a time (the same chunks as one
     // run: each run starts where the last ended, at a multiple of the chunk), and between two chunks the slots
-    // decode for a share of the time the chunk took (half), so a long prompt does not stop the others.  The
+    // decode for --read-decode-share of the time the chunk took, so a long prompt does not stop the others.  The
     // slots' windows then see the cache without the slots this prompt borrowed (marked missing: those experts
     // run on the CPU), never a prompt buffer.
-    static constexpr double decode_share = 0.5;
     bool batch_fatal{};
     int64_t il_parts{};
     double il_ms{};

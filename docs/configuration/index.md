@@ -207,6 +207,8 @@ plain decoding would give.
 | `slot-full-context` | server | switch | off | With `parallel`, give every slot the whole `max-context` instead of an equal share. Costs N times the KV cache. |
 | `batch` / `slots` | engine | integer 2..8 | off | The engine flag `parallel` sets. Use `parallel`; setting both is an error. |
 | `read-beside` | engine | switch | off | With `batch`: a prompt read short enough to take the GPU alone (under 16384 tokens) runs beside the decoding slots instead of holding them back, so their tokens keep coming while a new prompt is read. A read with no slot decoding takes the alone path, so one stream behaves exactly as before. The new prompt is read slower then (smaller chunks, the RAM-backed loan only); a conversation checkpoint inside such a read still pauses the windows. |
+| `read-decode-share` | engine | number 0..1 | 0.5 | With `batch`: of a prompt chunk read interleaved with the slots' windows, the share of the chunk's time the windows get before the next chunk. `0` runs such a read whole (the windows then wait for it). |
+| `read-live-chunk` | engine | integer tokens, multiple of 256 | 1024 | With `batch`: the chunk a prompt read takes while slots decode, so a long prompt holds the windows back for one short chunk at a time. Capped by the run's own chunk. |
 
 ## Conversation cache
 

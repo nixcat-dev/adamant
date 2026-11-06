@@ -150,9 +150,9 @@ bool Request::read_part(int64_t a0, int64_t b0, std::string& e) {
         return ok;
     }
     const int64_t C = std::max<int64_t>(runtime_.sp.chunk(), 1);
-    // while slots are decoding the prompt goes in chunks of a fixed small size, so a long prompt holds the
-    // slots' windows back for one short chunk at a time
-    constexpr int64_t live_chunk = 1024;
+    // while slots are decoding the prompt goes in chunks of --read-live-chunk (a small fixed size by default), so a
+    // long prompt holds the slots' windows back for one short chunk at a time
+    const int64_t live_chunk = std::max<int64_t>(256, runtime_.o.read_live_chunk);
     for (int64_t q = a0; q < b0;) {
         const int64_t r = std::min(b0, q + (runtime_.batch_on() ? std::min(C, live_chunk) : C));
         const auto tq = Clock::now();
@@ -188,8 +188,9 @@ bool Request::read_part(int64_t a0, int64_t b0, std::string& e) {
             basalt::log::info("basalt batch", "BYIELD %d not taken at %lld of %lld%s%s", ys, (long long) q,
                          (long long) n, ye.empty() ? "" : ": ", ye.c_str());
         }
-        if (decode_share <= 0.0 || !runtime_.batch_on()) continue;
-        const double budget = decode_share * std::chrono::duration<double, std::milli>(Clock::now() - tq).count();
+        if (runtime_.o.read_decode_share <= 0.0 || !runtime_.batch_on()) continue;
+        const double budget =
+            runtime_.o.read_decode_share * std::chrono::duration<double, std::milli>(Clock::now() - tq).count();
         const auto td = Clock::now();
         do {
             if (!runtime_.batch_step()) { batch_fatal = true; e = "a batch window failed"; return false; }

@@ -79,6 +79,11 @@ struct Options {
     /// --ram-margin-mib N: the RAM the machine is left with beside anything the engine locks or fills (the copy, the
     /// guard).  A headless box needs less than a desktop; the copy and the file cache's floor grow by what it gives up.
     int ram_margin_mib = 1024;
+    /// --read-decode-share F: of a prompt chunk read interleaved with the slots' windows, the share of the chunk's
+    /// time the windows get before the next chunk (0.5; 0 turns the interleaving off and the read runs whole).
+    double read_decode_share = 0.5;
+    /// --read-live-chunk N: the chunk a prompt read takes while slots decode (1024; the run's own chunk caps it).
+    int64_t read_live_chunk = 1024;
     bool resident_soft = false;
     bool resident_cpu_explicit = false;   // --resident-cpu-experts given by itself (not only implied)
     /// CS-T `--resident-budget-gib N`: the resident mode with a RAM budget - the N GiB of experts the GPU cache does

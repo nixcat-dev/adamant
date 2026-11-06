@@ -111,6 +111,19 @@ std::optional<int> parse_options(int argc, char** argv, Options& o, std::string&
         else if (a == "--batch") o.batch = std::atoi(next("--batch"));
         else if (a == "--slots") o.batch = std::atoi(next("--slots"));   // the same as --batch
         else if (a == "--read-beside") o.read_beside = true;
+        else if (a == "--read-decode-share") {
+            const double f = std::atof(next("--read-decode-share"));
+            if (f < 0.0 || f > 1.0) { basalt::log::error("basalt", "--read-decode-share needs 0 to 1"); return 2; }
+            o.read_decode_share = f;
+        }
+        else if (a == "--read-live-chunk") {
+            const long long n = std::atoll(next("--read-live-chunk"));
+            if (n < 256 || n % 256 != 0) {
+                basalt::log::error("basalt", "--read-live-chunk needs a multiple of 256, at least 256");
+                return 2;
+            }
+            o.read_live_chunk = n;
+        }
         else if (a == "--ram-margin-mib") {
             const int mib = std::atoi(next("--ram-margin-mib"));
             if (mib < 64) { basalt::log::error("basalt", "--ram-margin-mib needs 64 MiB or more"); return 2; }
