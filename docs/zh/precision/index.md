@@ -189,9 +189,10 @@ chunk（2,048-token 的 prompt 半段，只有 PPL）上，PPL 是 2.9581，低�
 prompt，专家 blob 超过 1.5 MB 的 pack（NVFP4）为 32768。一个 chunk 的 GEMM tile 决定其
 K/V 的舍入，所以这类 pack 上超过 16384 token 的 prompt 分块不同，其 K/V 末位可能不同；至多
 16384 token 的 prompt 和质量门槛 256-token 的 prompt 半段照旧分块，所以门槛的数字不动。
-`--parallel` 下，独自运行的读取按单流路径的方式分块；与 decode 槽位并行的读取取其上限借用
-额度允许的小 chunk，所以同一 prompt 的 K/V 末位在两种方式之间可能不同。一个与 decode 槽位
-并行、又为更短请求让路的读取，稍后在同样的 chunk 里、在槽位旁边、无 CPU 份额地读完其余部分。
+`--parallel` 下，独自运行的读取按单流路径的方式分块；与 decode 槽位并行的读取取其 RAM 借用
+额度允许的 chunk（只有没有 RAM 副本时才以 1216 槽位为上限），所以同一 prompt 的 K/V 末位在两种方式
+之间可能不同。一个与 decode 槽位并行、又为更短请求让路的读取，稍后在同样的 chunk 里、在槽位旁
+边、无 CPU 份额地读完其余部分。
 
 **短首块。** 超过 chunk 上限（且至少 32,768 token）的 prompt 把前 16,384 个 token 作为一个
 chunk 读取，其余按每块至多上限的等大 chunk 读取，于是第一个 chunk 需要等待的 PLE 行更少。

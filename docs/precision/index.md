@@ -190,9 +190,10 @@ access the cutoff stays at 2,560 (4,096 with `--peer-exclusive`).
 whose expert blobs exceed 1.5 MB (NVFP4). A chunk's GEMM tiles set the rounding of its K/V, so a prompt longer than 16384
 tokens on such a pack is chunked differently and its K/V can differ in the last bits; prompts up to 16384 tokens and the
 256-token prompt half of the quality gate chunk as before, so the gate's numbers do not move. With `--parallel` a
-read that runs alone chunks as the single-stream path does; a read beside decoding slots takes the smaller chunk its
-capped loan allows, so the same prompt's K/V can differ in the last bits between the two. A read beside decoding slots
-that gives way to a shorter request reads its rest later in the same chunks, beside the slots, with no CPU share.
+read that runs alone chunks as the single-stream path does; a read beside decoding slots takes the chunk its
+RAM-backed loan allows (capped at 1216 slots only without RAM copies), so the same prompt's K/V can differ in the last
+bits between the two. A read beside decoding slots that gives way to a shorter request reads its rest later in the same
+chunks, beside the slots, with no CPU share.
 
 **Short first chunk.** A prompt above the chunk cap (and at least 32,768 tokens) reads its first 16,384 tokens as one
 chunk and the rest in equal chunks of at most the cap, so the first chunk waits for fewer PLE rows. This moves the chunk

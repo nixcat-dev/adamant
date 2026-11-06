@@ -184,6 +184,7 @@ drafter 提出 token，模型验证它们。除非开启 `relaxed-drafting`，�
 | `parallel` | 服务器 | 整数 1..8 | 1 | 以批处理槽位同时服务 N 个请求；更多请求排队等待。`max-context` 由槽位共享：每个槽位容纳 `max-context / N` 个 token。各槽位的 KV cache 从专家缓存中划出。设置引擎的 `batch`。 |
 | `slot-full-context` | 服务器 | 开关 | 关闭 | 启用 `parallel` 时，给每个槽位完整的 `max-context`，而不是均分份额。代价是 N 倍的 KV cache。 |
 | `batch` / `slots` | 引擎 | 整数 2..8 | 关闭 | `parallel` 所设置的引擎标志。请用 `parallel`；两者都设置是错误。 |
+| `read-beside` | 引擎 | 开关 | 关闭 | 配合 `batch`：本可独占 GPU 的短提示词读取（少于 16384 token）改在解码槽位旁运行，而不让槽位等待，于是新提示词读取期间槽位的 token 仍持续产出。没有槽位在解码的读取走独占路径，因此单流行为完全不变。在槽位旁，该读取只借用有 RAM 副本的缓存槽位（有 RAM 副本时没有其他上限），并且比独占读取慢，因为它与窗口共享 GPU；这样的读取中的会话检查点仍会让窗口暂停。 |
 
 ## 会话缓存
 

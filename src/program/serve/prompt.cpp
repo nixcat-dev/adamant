@@ -122,14 +122,10 @@ bool Request::refill(std::string& e) {
 // `chunk` > 0: that chunk (a split read's), its first one `head` tokens (0: none)
 bool Request::lend(int64_t tokens, std::string& e, int64_t chunk, int64_t head) {
     if (runtime_.pf_parts.empty()) return true;                     // its own buffers: nothing to lend
-    // the ring depth this read's layout uses; every size computed below (and the layout) follows it, and
-    // the full depth is restored on the way out for the sizing done elsewhere
     // --read-beside: a short read beside a decoding slot takes the beside path too (read_part's decision), so its
-    // ring depth and loan follow the same rule
+    // chunks follow the same rule
     const bool beside = runtime_.batch_on() &&
                         (tokens > runtime_.kReadAlone || resumed_chunk > 0 || runtime_.o.read_beside);
-    basalt::prefill::Prefill::set_ring_depth(beside ? runtime_.kRingDecoding : 1 << 20);
-    struct RingReset { ~RingReset() { basalt::prefill::Prefill::set_ring_depth(1 << 20); } } ring_reset;
     // what this segment needs, capped by the configured chunk: a request lends only what its own
     // prompt needs, so a large chunk costs a short prompt nothing
     // A bare `auto` reads a prompt in equal chunks of at most this many tokens: past a few thousand tokens
@@ -138,18 +134,19 @@ bool Request::lend(int64_t tokens, std::string& e, int64_t chunk, int64_t head) 
     // `auto:N` and a fixed N keep the operator's number.  (Chunking changes the GEMM tiles and so the rounding of
     // a prompt's K/V; the answers can differ from another chunking by greedy near-ties.)
     int64_t cap = runtime_.read_cap();
-    // Loan limits while slots decode: the loan takes only slots whose expert has a RAM copy (a lent slot
-    // is refilled from RAM, never read from the file, before the slots decode again), and a read beside
-    // them stays within kLendCapDecoding slots (they keep their experts in the cache).  A read on an idle
-    // engine may refill lent slots from the file, so a larger chunk is worth it.  The chunk shrinks to the
-    // loan, but not below the smallest chunk the prompt path runs.
+    // Loan limit while slots decode: the loan takes only slots whose expert has a RAM copy (a lent slot
+    // is refilled from RAM, never read from the file, before the slots decode again); without RAM copies a
+    // read beside them stays within kLendCapDecoding slots.  A read on an idle engine may refill lent slots
+    // from the file, so a larger chunk is worth it.  The chunk shrinks to the loan, but not below the
+    // smallest chunk the prompt path runs.
     int64_t loan_lim = std::numeric_limits<int64_t>::max();
     if (runtime_.batch_on()) {
-        if (beside) loan_lim = runtime_.kLendCapDecoding;
         // the RAM-backed slots are the cache's last ones: those still live after the KV took its share
         if (runtime_.src.complement_ready())
-            loan_lim = std::min<int64_t>(loan_lim, std::max<int64_t>(0, runtime_.src.resident_lent_slots() -
-                                                                         (runtime_.xcache.full_slots() - runtime_.xcache.slots())));
+            loan_lim = std::max<int64_t>(0, runtime_.src.resident_lent_slots() -
+                                                (runtime_.xcache.full_slots() - runtime_.xcache.slots()));
+        else if (beside)
+            loan_lim = runtime_.kLendCapDecoding;
     }
     if (loan_lim != std::numeric_limits<int64_t>::max() && !runtime_.pf_parts.empty() && runtime_.pf_parts[0].first >= 0) {
         const int64_t lc = std::max<int64_t>(256, engine_local::biggest_chunk(cap, [&](int64_t t) {

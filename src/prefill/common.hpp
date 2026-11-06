@@ -31,7 +31,7 @@ constexpr int RING_MAX = 384;           // the arrays; the ring itself is ring_s
 extern int64_t g_stream_all_min;
 inline int64_t stream_all_min() { return g_stream_all_min; }
 // The streamed ring's slots (one whole expert blob each, the same for every pack).  g_ring_depth caps the depth the
-// next layout is laid out with (a prompt read beside decoding slots lends fewer cache slots with a shallower ring).
+// next layout is laid out with.
 constexpr int kPrefillRing = 256;
 // From kDeepRingTokens tokens on, a layer's attention half outlasts the copies a kPrefillRing-slot ring holds: the copy
 // engine stops until the layer's experts start, and their walk then waits for the layer's last copies.  Such a chunk

@@ -181,13 +181,12 @@ private:
         std::vector<std::pair<int32_t, int32_t>> lent;
     };
     std::vector<PfPart> pf_parts{};
-    // A prompt read beside decoding slots lends at most this many cache slots, so their experts stay in the
-    // cache, and its streamed ring is this deep (the loan shrinks with it); otherwise the ring is full depth.
+    // An image read, or a prompt read with no RAM copies to refill from, lends at most this many cache slots while
+    // slots decode, so their experts stay in the cache.
     static constexpr int64_t kLendCapDecoding = 1216;
-    static constexpr int kRingDecoding = 64;
     // A read of at most this many tokens runs alone even while slots decode: they wait for it (a few seconds at
-    // most) and it lends and reads as on an idle engine.  A longer read goes beside them, within the limits above,
-    // and so does the rest of one that gave way to a shorter request (in its chunk).
+    // most) and it lends and reads as on an idle engine.  A longer read goes beside them, within the loan limit
+    // above, and so does the rest of one that gave way to a shorter request (in its chunk).
     static constexpr int64_t kReadAlone = 16384;
     bool any_loan{};
     static constexpr int64_t kStepChunks[] = {6144, 4096, 3072, 2048, 1536, 1024, 512};
