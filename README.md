@@ -1,5 +1,7 @@
 # Adamant
 
+[简体中文](README.zh-CN.md)
+
 Adamant is an Ada Lovelace (RTX 40-series, sm_89) fork of
 [Basalt](https://github.com/jesdga95/basalt), the local inference engine for the
 **Qwen3.8-Flash-Next** mixture-of-experts model, itself based on Strata.

@@ -1,5 +1,7 @@
 # `.basalt` file format changelog
 
+[简体中文](zh/basalt-file-changelog.md)
+
 The version is the `u32` after the magic in the file's header. The engine reads one version; the
 [model file](model-file.md) page describes the current one.
 

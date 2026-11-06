@@ -1,5 +1,7 @@
 # Running the server
 
+[简体中文](zh/running.md)
+
 The long-form notes behind the settings in [configuration](configuration/index.md): concurrent requests, the KV cache, memory floors and image input. Diagnostic flags: `bin/basalt --help`.
 
 ## Start-up and loading

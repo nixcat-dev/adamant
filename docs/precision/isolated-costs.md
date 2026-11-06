@@ -1,5 +1,7 @@
 # Isolated precision costs
 
+[简体中文](../zh/precision/isolated-costs.md)
+
 The decode-path tables are in [index.md](index.md); the quality method is in [quality.md](quality.md). This page
 measures every place where the NVIDIA NVFP4 pack's decode path rounds below the model's own precision, each switched
 off on its own, and everything switched off at once. The model's own precision is NVIDIA's checkpoint: the NVFP4

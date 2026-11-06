@@ -1,5 +1,7 @@
 # Precision of the features
 
+[简体中文](../zh/precision/features.md)
+
 The decode-path precision tables are in [index.md](index.md); the quality method is in [quality.md](quality.md). This page covers the NVFP4 dense projections, the two-stage verify head, logit bias, speculative decoding and relaxed drafting.
 
 ## 6-bit dense projections (NVIDIA NVFP4 pack)

@@ -1,5 +1,7 @@
 # Community runs
 
+[简体中文](zh/community.md)
+
 Benchmark runs submitted by users, all taken with the same preset so the rows compare, live in `docs/community/benchmarks.json`. The rows currently in that file are Basalt's Blackwell runs, inherited with the fork; Adamant has no published page of its own yet.
 
 ## Add your run

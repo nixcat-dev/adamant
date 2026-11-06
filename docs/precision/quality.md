@@ -1,5 +1,7 @@
 # How quality is measured
 
+[简体中文](../zh/precision/quality.md)
+
 The precision tables are in [index.md](index.md).
 
 `basalt-bench --quality` (`tools/ppl_gate.py`) scores wikitext-2 (`wiki.test.raw`) in 512-token chunks. The first half

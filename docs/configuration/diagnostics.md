@@ -1,5 +1,7 @@
 # Diagnostics and measurement flags
 
+[简体中文](../zh/configuration/diagnostics.md)
+
 Flags for measuring, debugging and testing the engine. They are not settings: each is off by default, and the
 [configuration reference](index.md) lists the settings.
 

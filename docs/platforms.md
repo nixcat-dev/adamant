@@ -1,5 +1,7 @@
 # Platforms
 
+[简体中文](zh/platforms.md)
+
 Adamant runs natively on Linux x64 and Windows x64, on NVIDIA Ada Lovelace (sm_89). Linux is where
 the engine is tested and benchmarked. CI builds both and runs the CPU tests on each. The GPU
 tests and the quality gate run on a machine with a card.

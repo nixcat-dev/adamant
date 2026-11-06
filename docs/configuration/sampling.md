@@ -1,5 +1,7 @@
 # Sampling and thinking
 
+[简体中文](../zh/configuration/sampling.md)
+
 The per-request sampling fields, the defaults a request inherits, and how thinking ends.
 
 A request carries its own sampling fields. A field the request leaves out takes the launch option of the same name
