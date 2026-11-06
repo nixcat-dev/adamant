@@ -1,6 +1,8 @@
 #include "context.hpp"
 #include "run.hpp"
 
+#include "basalt/platform/memory.hpp"
+
 namespace basalt::program::generate {
 
 int run(int argc, char** argv) {
@@ -9,6 +11,8 @@ int run(int argc, char** argv) {
     Options o;
     std::string ppl_base, ppl_out;
     if (const auto code = cli::start(argc, argv, o, ppl_base, ppl_out)) return *code;
+    // the RAM the machine keeps for itself: everything that sizes a copy or a floor reads this margin
+    basalt::platform::set_ram_margin((uint64_t) std::max(0, o.ram_margin_mib) << 20);
     // ---- the GPUs: chosen before any CUDA call, which then sees only them, the main card as device 0
     std::vector<basalt::program::GpuCard> chosen_cards;
     if (const auto code = cli::select_gpus(o, chosen_cards, basalt::kernels::kDmMaxX + 1)) return *code;

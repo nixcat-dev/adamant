@@ -131,6 +131,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `vram-reserve-mib` | 引擎 | 整数 MiB，至少 256（Linux 上 128） | 700（在否则会分到过少槽位的卡上自动下调，最低到 300；你给出的值会被保留，除非按此处所述上调） | 当 `expert-cache auto` 决定缓存大小时，主卡上留给图、暂存区和输出头的空闲 VRAM。`expert-cache auto` 定完缓存后加载的服务器 kernel 和窗口图（96 MiB，`--parallel` 时每槽位再加 24 MiB）要装入其中；预留小到装不下它们又要保持下限时会被上调：Linux 上 `--parallel 4` 时，低于 320 MiB（128 + 96 + 4 x 24）的任何值都变成 320，`expert cache auto` 启动行会同时给出两者（`320 MiB reserved (150 asked, ...)`）。低于下限会被拒绝。如果机器开始对 GPU 内存换页，或其他程序需要 VRAM，就调高它。 |
 | `resident-experts` | 引擎 | 开关 | 引擎带有该模型的专家 profile 时开启 | 把 GPU 未容纳的专家保存在页锁定 RAM 中，从而没有任何专家会被再次从文件读取。为操作系统留出 RAM 下限；RAM 装不下时退化为普通文件映射。`mmap-experts` 会关闭它。 |
 | `resident-budget-gib` | 引擎 | 数字 GiB | 未设置时 auto | 类似 `resident-experts`，但 RAM 中最多放 N GiB 的专家，热的优先。若会留下低于 RAM 下限的空间则拒绝；错误信息会给出最大的安全值。 |
+| `ram-margin-mib` | 引擎 | 整数 MiB，至少 64 | 1024 | 在专家副本和内存守卫之外为机器其余部分保留的 RAM。无头服务器所需的远少于桌面机；让出的部分会进入专家副本和 OS 页缓存，而冷提示词的专家正是从那里读取。启动时的 `RAM floor` 行会打印实际使用的余量。 |
 | `mmap-experts` | 引擎 | 开关 | 关闭 | 放弃默认的常驻 RAM 副本，退回文件映射。速度因此取决于 OS 页缓存。 |
 | `shared-expert-arena` | 引擎 | 文件路径 | 关闭 | 用一个共享文件支撑常驻 arena，让多个进程共用一份副本。放在 `/dev/shm` 上。 |
 | `expert-profile` | 引擎 | 文件路径 | 引擎自带的（其构建来源源码树中的 `data/profiles/<model>.prof`） | 启动时放置所用的专家 profile，格式同 `data/profiles`：哪些专家优先进 VRAM。设置它可以让某个二进制的放置不再依赖其构建目录，或用于尝试另一个 profile。文件缺失或为空会阻止启动。 |

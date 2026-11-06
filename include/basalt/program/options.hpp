@@ -76,6 +76,9 @@ struct Options {
     /// RAM left free beside the resident copy: the RAM floor, 1024 MiB (the same floor the memory guard
     /// keeps), so a box that can hold the experts holds all of them.
     uint64_t resident_headroom = 1024ull << 20;
+    /// --ram-margin-mib N: the RAM the machine is left with beside anything the engine locks or fills (the copy, the
+    /// guard).  A headless box needs less than a desktop; the copy and the file cache's floor grow by what it gives up.
+    int ram_margin_mib = 1024;
     bool resident_soft = false;
     bool resident_cpu_explicit = false;   // --resident-cpu-experts given by itself (not only implied)
     /// CS-T `--resident-budget-gib N`: the resident mode with a RAM budget - the N GiB of experts the GPU cache does

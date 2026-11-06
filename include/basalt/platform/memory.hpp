@@ -72,8 +72,12 @@ uint64_t available_memory();
 /// Linux keeps no separate charge, so there it is the available-RAM reading (0 when unknown).
 uint64_t commit_headroom();
 
-/// The RAM left alone by anything that locks or fills memory: the larger of 2 GiB and 5% of the machine's RAM.
+/// The RAM left alone by anything that locks or fills memory: 1024 MiB, or what set_ram_margin was given.
 uint64_t ram_margin();
+
+/// Sets the RAM kept free beside the copy and the guard (--ram-margin-mib): what the rest of the machine needs, in
+/// place of the default 1024 MiB.  Call it once, before the plan reads the margin.
+void set_ram_margin(uint64_t bytes);
 
 /// Host RAM the engine takes after the resident expert copy is sized and before it serves: the GPU libraries' own
 /// host memory, the prompt path's and the verifier's staging.  A resident copy leaves this much beside the margin.

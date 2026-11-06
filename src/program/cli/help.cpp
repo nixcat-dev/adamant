@@ -208,7 +208,10 @@ void usage() {
                  "  --resident-budget-gib N  the resident mode with at most N GiB of experts in RAM (hottest first;\n"
                  "                       auto when not set: what fits);\n"
                  "                       a budget that would leave less than the RAM floor free is refused, naming\n"
-                 "                       the largest safe value.\n");
+                 "                       the largest safe value.\n"
+                 "  --ram-margin-mib N   RAM left free for the rest of the machine beside the expert copy and the\n"
+                 "                       guard (default 1024, at least 64).  A headless box needs less; what it gives\n"
+                 "                       up goes to the copy and to the OS file cache.\n");
 }
 
 }  // namespace basalt::program::cli
