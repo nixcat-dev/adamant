@@ -16,7 +16,6 @@ int resident_load(Context& context) {
     auto& ram_available_at_plan = *context.ram_available_at_plan;
     auto& auto_resident_bytes = *context.auto_resident_bytes;
     auto& xcache = *context.xcache;
-    auto& kv_tail_slots = *context.kv_tail_slots;
     auto& cache_fill_bytes = *context.cache_fill_bytes;
     auto& peer = *context.peer;
     auto& measure_pinned_share = context.measure_pinned_share;
@@ -109,7 +108,7 @@ int resident_load(Context& context) {
             // Allow the backed slots plus a fixed amount of file reading per prompt.  Those reads are evictable page
             // cache that the refill passes through once, so two chunks' worth are funded; the read-time cap
             // (kMaxAutoChunk) bounds the chunk, so the ceiling stops there too.
-            const int64_t allow = std::max<int64_t>(0, src.resident_lent_slots() - kv_tail_slots) +
+            const int64_t allow = src.resident_lent_slots() +
                                   (int64_t) (2 * basalt::platform::kPromptFileReadBytes / std::max<uint64_t>(1, basalt::kernels::cpu::expert_layout().max_blob));
             auto_ceiling = std::max<int64_t>(8192, engine_local::biggest_chunk(std::min<int64_t>(auto_ceiling, kMaxAutoChunk),
                                                                  [&](int64_t t) { return serve_loans::lend_slots(xcache, g, ss, t) <= allow; }));

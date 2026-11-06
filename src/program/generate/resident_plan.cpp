@@ -17,7 +17,6 @@ int resident_plan(Context& context) {
     auto& auto_resident_bytes = *context.auto_resident_bytes;
     auto& peer_prompt_bytes = context.peer_prompt_bytes;
     auto& xcache = *context.xcache;
-    auto& kv_tail_slots = *context.kv_tail_slots;
     auto& cache_fill_bytes = *context.cache_fill_bytes;
     auto& peer_split_bytes = context.peer_split_bytes;
     auto& peer_expert_room = context.peer_expert_room;
@@ -187,10 +186,10 @@ int resident_plan(Context& context) {
             else stage_lent_bytes += basalt::kernels::cpu::expert_layout().blob_bytes(pr.first);
         }
     }
-    // the elastic KV's tail keeps its experts in RAM too (a slot lent to the KV becomes a CPU miss read from RAM),
-    // below it the prompt path's lend region as before: the RAM decides how far down that goes, as it does today
-    if (kv_tail_slots > 0)
-        lend_from = lend_from >= 0 ? std::max<int64_t>(0, lend_from - kv_tail_slots) : xcache.slots() - kv_tail_slots;
+    // The elastic KV's tail is not part of this plan.  Its slots hold experts only while no request has taken the VRAM
+    // back, so keeping their copies in RAM from start-up pays for cells that a request may never need.  The plan for
+    // them is made when they are taken: relend() recomputes the loan against the cells backed at that moment, and the
+    // experts the taken slots displace get a RAM home when the RAM has room for one (Runtime::home_given_up).
     // ---- the start-up picks for the settings the user left out (peer-exclusive, resident RAM, pool affinity and
     // size): one pure rule over what this machine and pack have, so a given setting is never replaced.  The pool is
     // built here, with the picks.

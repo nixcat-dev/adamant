@@ -296,6 +296,15 @@ bool Runtime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::string& 
         const int64_t gran = (int64_t) std::max<uint64_t>(basalt::core::vmm::granularity(), 1);
         const int64_t keep = std::max<int64_t>(0, (xcache.mapped_bytes() - (add - room)) / gran * gran);
         if (kv_keep_routed && !move_routed_below(xcache.slots_after_shrink(keep), "elastic KV", e)) return false;
+        // These cells take the slots the tail kept no RAM copy for (the start-up plan leaves them out), so the
+        // experts they displace, and the ones the smaller loan will overwrite, get a home now if the RAM has room.
+        // The cells are needed either way: without the room they are read from the file like any expert no tier holds.
+        if (src.complement_ready()) {
+            std::string herr;
+            if (!home_given_up(xcache.slots_after_shrink(keep), "elastic KV", herr))
+                basalt::log::info("basalt serve", "elastic KV: the experts these cells displace keep no RAM copy (%s)",
+                                  herr.c_str());
+        }
         if (!xcache.shrink(keep, e)) return false;
         const int64_t live = xcache.slots();
         std::vector<int32_t> off;
@@ -331,6 +340,8 @@ bool Runtime::kv_release(basalt::core::SessionState& s, int64_t cells, std::stri
     const int64_t before = xcache.slots(), had = basalt::core::session_kv_cells(s);
     if (!basalt::core::session_kv_unmap(s, cells, e)) { e = "elastic KV: " + e; return false; }
     if (!cache_regrow(e)) return false;
+    // the slots are the experts' again: the homes above the loan go (see release_loan_homes), the loan keeps its own
+    release_loan_homes("elastic KV");
     ++kv_moves;
     basalt::log::info("basalt serve", "elastic KV: %lld -> %lld cells backed, the expert cache %lld -> %lld "
                          "slots, in %.1f ms", (long long) had, (long long) basalt::core::session_kv_cells(s),

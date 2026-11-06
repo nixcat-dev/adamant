@@ -348,7 +348,7 @@ int cache_size(Context& context) {
         ? xcache.full_slots() - xcache.slots_within(xcache.full_bytes() - xcache.elastic_bytes()) : 0;
     if (kv_tail_slots > 0)
         basalt::log::info("basalt generate", "elastic KV: %lld cells backed per session, the other %.2f GiB of KV are "
-                             "the expert cache's last %lld slots until a request needs them",
+                             "the expert cache's last %lld slots until a request needs them (no RAM copy until then)",
                      (long long) kv_floor, (double) kv_tail_bytes / 1073741824.0, (long long) kv_tail_slots);
     if (o.expert_cache > 0) {
         basalt::log::info("basalt generate", "expert cache %lld slots, %.2f GiB of VRAM; policy is",
@@ -368,7 +368,6 @@ int cache_size(Context& context) {
 
     context.peer_prompt_bytes = peer_prompt_bytes;
     context.xcache = &xcache;
-    context.kv_tail_slots = &kv_tail_slots;
     return cache_fill(context);
 }
 
