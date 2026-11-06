@@ -38,6 +38,7 @@ bool Runtime::move_routed_below(int64_t first, const char* why, std::string& e,
     struct Moved {
         int32_t* row;
         int32_t hot;
+        int32_t cold;
         int32_t hot_slot;
         int32_t cold_slot;
     };
@@ -75,7 +76,7 @@ bool Runtime::move_routed_below(int64_t first, const char* why, std::string& e,
                 cudaSuccess)
                 return give_up(std::string("moving an expert out of the cache's tail: ") +
                                cudaGetErrorString(cudaGetLastError()));
-            done.push_back({r, t.hot, t.to, t.from});
+            done.push_back({r, t.hot, t.cold, t.to, t.from});
             ++moved;
         }
     }
