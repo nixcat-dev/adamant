@@ -1,5 +1,7 @@
 # Building and testing
 
+[简体中文](zh/building.md)
+
 Clone, requirements and the build commands are in the [README](../README.md). This page has the rest.
 
 ## What is in the repository

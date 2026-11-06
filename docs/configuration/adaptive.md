@@ -1,5 +1,7 @@
 # The adaptive expert tier
 
+[简体中文](../zh/configuration/adaptive.md)
+
 The GPUs hold only part of the model's experts. The adaptive tier follows what the conversation routes to and moves
 the experts it uses most into VRAM, in rounds that run beside decode. These settings shape the rounds. The built-in
 values are the fastest measured here; this page says what each one trades and what was measured.

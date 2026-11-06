@@ -1,5 +1,7 @@
 # GPUs
 
+[简体中文](../zh/configuration/gpus.md)
+
 One setting picks the cards: `gpu`. It means the same in the server (`"gpu"` in the config's `server` section, or
 `--gpu`), in `basalt` itself, in `basalt-bench` and in `basalt-probe`.
 

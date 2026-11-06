@@ -1,5 +1,7 @@
 # Unified kernel
 
+[简体中文](zh/unified-kernel.md)
+
 One piece of the unified-kernel work is in the engine; the full-layer kernel and the GDN mid chain it led to were retired.
 
 ## What runs

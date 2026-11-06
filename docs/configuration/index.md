@@ -1,5 +1,7 @@
 # Configuration reference
 
+[简体中文](../zh/configuration/index.md)
+
 Every setting a user can pass to Basalt: the server options, the engine flags, the per-request sampling fields and
 the model file's sampling defaults. For what a setting does to speed, memory and output precision see the
 [running](../running.md) and [precision](../precision/index.md).

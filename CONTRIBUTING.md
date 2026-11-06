@@ -1,5 +1,7 @@
 # Contributing to Adamant
 
+[简体中文](CONTRIBUTING.zh-CN.md)
+
 Adamant targets Qwen3.8-Flash-Next on NVIDIA Ada GPUs. Ada support is under development; the inherited Blackwell implementation is not evidence of Ada correctness or performance. The [parity, quality and benchmark rules](#what-every-change-must-include) below define what a change needs, and [Ada execution and validation](docs/precision/ada.md) records the paths still to be measured.
 
 ## Scope
@@ -37,6 +39,7 @@ Adamant targets Qwen3.8-Flash-Next on NVIDIA Ada GPUs. Ada support is under deve
 - Never amend or force-push shared branches; add new commits.
 - No notes, scratch files or generated reports in the repo.
 - Docs: no file over 300 lines; split a longer topic into a folder of files; keep docs short, stateless and free of duplication.
+- Docs are bilingual: every English doc file has a Simplified Chinese counterpart (`docs/` mirrored under `docs/zh/`, `README.zh-CN.md`, `CONTRIBUTING.zh-CN.md`), cross-linked at the top. Change both files of a pair in the same commit. See `AGENTS.md` for the full rule.
 - A PR description lists: what changed, the parity results, the microbench and `basalt-bench` before/after (with the power limit), and the quality-check result.
 
 ## Other ways to help

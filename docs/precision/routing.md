@@ -1,5 +1,7 @@
 # Routing changes (opt-in, less accurate)
 
+[简体中文](../zh/precision/routing.md)
+
 Two flags change which experts a decode window computes. Both are off by default, are never picked automatically,
 and are listed in the start warning of lossy flags (shared with `--relaxed-drafting`,
 [features.md](features.md#relaxed-drafting)):

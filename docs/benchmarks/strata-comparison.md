@@ -1,5 +1,7 @@
 # Adamant and Strata on one RTX 4090
 
+[简体中文](../zh/benchmarks/strata-comparison.md)
+
 Development comparison recorded 2026-11-05 on one RTX 4090 (24 GB) at a
 450 W power limit, with 64 GB system RAM and an Intel Core i7-13700K. It compares
 the deployed Adamant and Strata configurations using the same UD-IQ4_XS source

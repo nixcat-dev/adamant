@@ -1,5 +1,7 @@
 # basalt-probe
 
+[简体中文](zh/probe.md)
+
 `bin/basalt-probe` starts the engine as a child process (`--serve`, like `basalt-bench`), asks it for the machine's
 rates, measures cold decode speed on the three standard fixtures and prints a short report with suggested values. It is
 manual: it prints and saves nothing (a `--expert-profile-save` file is compared, never written). It is a separate
