@@ -164,6 +164,9 @@ enum class RamLevel { Ok, Low, Critical };
 /// Below this much available RAM a running request stops whatever the stall reading says: what a request still
 /// allocates (its own buffers, a checkpoint) plus room for the OS to compress or drop other programs' idle pages.
 inline constexpr uint64_t kRamHardFloor = 1ull << 30;
+/// The critical floor the guard judges: kRamHardFloor, or the margin (--ram-margin-mib) when that is smaller, so a box
+/// that keeps 256 MiB free is not stopped for RAM at 1 GiB free.
+uint64_t ram_hard_floor();
 /// The shares of time (percent, averaged over ten seconds) in which some task, or every task, waited on memory, above
 /// which RAM below the guard's floor is critical: tasks then wait on memory most of the time (thrashing). One program
 /// reclaiming into compressed swap stays below them, even when it is the only task running and so stalls `full` too.

@@ -184,6 +184,11 @@ uint64_t ram_margin() { return g_ram_margin.load(std::memory_order_relaxed); }
 
 void set_ram_margin(uint64_t bytes) { g_ram_margin.store(bytes, std::memory_order_relaxed); }
 
+uint64_t ram_hard_floor() {
+    const uint64_t margin = ram_margin();
+    return margin < kRamHardFloor ? margin : kRamHardFloor;
+}
+
 uint64_t commit_headroom() {
 #if defined(_WIN32)
     MEMORYSTATUSEX ms{};
@@ -302,7 +307,7 @@ std::string ram_stop_message(uint64_t avail, uint64_t floor, uint64_t hard, cons
                       (unsigned long long) (floor >> 20));
     char tail[160] = "";
     if (own > others)
-        std::snprintf(tail, sizeof tail, "; lower --resident-budget-gib");
+        std::snprintf(tail, sizeof tail, "; lower --ram-margin-mib or --resident-budget-gib");
     else if (others >= (1ull << 20))
         std::snprintf(tail, sizeof tail, "; other programs took %llu MiB since the engine was ready",
                       (unsigned long long) (others >> 20));
@@ -339,7 +344,7 @@ void guard_judge(uint64_t avail) {
     const uint64_t below_ms = g_below.update(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
         ram_below_floor(avail, floor));
-    const RamLevel level = ram_level(avail, floor, kRamHardFloor, stalls, below_ms);
+    const RamLevel level = ram_level(avail, floor, ram_hard_floor(), stalls, below_ms);
     const RamLevel was = g_judged;
     {
         std::lock_guard<std::mutex> lock(g_guard_mu);
@@ -353,8 +358,8 @@ void guard_judge(uint64_t avail) {
         basalt::log::warn("basalt", "RAM low: %llu MiB free < %llu MiB guard", mib, (unsigned long long) (floor >> 20));
     if (level == RamLevel::Critical && was != RamLevel::Critical && stalls.known)
         basalt::log::warn("basalt", "RAM critical: %llu MiB free, hard floor %llu MiB, memory stalls some "
-                          "%.0f%% full %.0f%%", mib, (unsigned long long) (kRamHardFloor >> 20), stalls.some, stalls.full);
-    if (level == RamLevel::Critical && was != RamLevel::Critical && !stalls.known && avail >= kRamHardFloor)
+                          "%.0f%% full %.0f%%", mib, (unsigned long long) (ram_hard_floor() >> 20), stalls.some, stalls.full);
+    if (level == RamLevel::Critical && was != RamLevel::Critical && !stalls.known && avail >= ram_hard_floor())
         basalt::log::warn("basalt", "RAM critical: %llu MiB free, below the %llu MiB guard for %llu s", mib,
                           (unsigned long long) (floor >> 20), (unsigned long long) (below_ms / 1000));
     if (level == RamLevel::Low && was == RamLevel::Critical)

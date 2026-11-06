@@ -296,15 +296,9 @@ bool Runtime::kv_fit(basalt::core::SessionState& s, int64_t cells, std::string& 
         const int64_t gran = (int64_t) std::max<uint64_t>(basalt::core::vmm::granularity(), 1);
         const int64_t keep = std::max<int64_t>(0, (xcache.mapped_bytes() - (add - room)) / gran * gran);
         if (kv_keep_routed && !move_routed_below(xcache.slots_after_shrink(keep), "elastic KV", e)) return false;
-        // These cells take the slots the tail kept no RAM copy for (the start-up plan leaves them out), so the
-        // experts they displace, and the ones the smaller loan will overwrite, get a home now if the RAM has room.
-        // The cells are needed either way: without the room they are read from the file like any expert no tier holds.
-        if (src.complement_ready()) {
-            std::string herr;
-            if (!home_given_up(xcache.slots_after_shrink(keep), "elastic KV", herr))
-                basalt::log::info("basalt serve", "elastic KV: the experts these cells displace keep no RAM copy (%s)",
-                                  herr.c_str());
-        }
+        // The experts these cells displace keep no RAM copy: a tail's worth is several GiB copied on the request's
+        // path, and that burst is what pushes free RAM under the guard when slots grow together.  They are read from
+        // the file like any expert no tier holds.
         if (!xcache.shrink(keep, e)) return false;
         const int64_t live = xcache.slots();
         std::vector<int32_t> off;
