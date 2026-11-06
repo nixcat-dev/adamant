@@ -187,9 +187,10 @@ int resident_plan(Context& context) {
         }
     }
     // The elastic KV's tail is not part of this plan.  Its slots hold experts only while no request has taken the VRAM
-    // back, so keeping their copies in RAM from start-up pays for cells that a request may never need.  The plan for
-    // them is made when they are taken: relend() recomputes the loan against the cells backed at that moment, and the
-    // experts the taken slots displace get a RAM home when the RAM has room for one (Runtime::home_given_up).
+    // back, so keeping their copies in RAM from start-up pays for cells that a request may never need.  When the cells
+    // are taken, relend() recomputes the loan against what is mapped then; the experts of the slots it displaces keep
+    // a RAM copy only where the lend region's own copies reach (choose_resident_keep_from fills it from the end), and
+    // the rest are read from the file like any expert no tier holds.
     // ---- the start-up picks for the settings the user left out (peer-exclusive, resident RAM, pool affinity and
     // size): one pure rule over what this machine and pack have, so a given setting is never replaced.  The pool is
     // built here, with the picks.

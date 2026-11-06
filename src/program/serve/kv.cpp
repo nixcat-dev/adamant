@@ -34,6 +34,26 @@ bool Runtime::move_routed_below(int64_t first, const char* why, std::string& e,
     }
     std::vector<uint8_t> in_ram((size_t) g.n_expert);
     std::vector<serve_loans::RoutedTrade> trades;
+    // the residence table follows the copies only once they have landed: a failed copy leaves the cache as it was
+    struct Moved {
+        int32_t* row;
+        int32_t hot;
+        int32_t hot_slot;
+        int32_t cold_slot;
+    };
+    std::vector<Moved> done;
+    // A copy that fails after others were issued leaves the cold experts' slots holding the hot blobs, so the table
+    // cannot keep naming them: both ends of every issued trade become a miss, which recomputes them.
+    auto give_up = [&](const std::string& why) {
+        (void) cudaStreamSynchronize(adapt_stream);
+        (void) cudaGetLastError();
+        for (const Moved& d : done) {
+            d.row[d.hot] = basalt::core::kNotResident;
+            d.row[d.cold] = basalt::core::kNotResident;
+        }
+        e = why;
+        return false;
+    };
     for (int64_t l = 0; l < g.n_layers; ++l) {
         const float* u = drive.d.usage.data() + (size_t) (l * g.n_expert);
         int32_t* r = host_res.data() + (size_t) (l * g.n_expert);
@@ -46,26 +66,24 @@ bool Runtime::move_routed_below(int64_t first, const char* why, std::string& e,
             const void* from = xcache.device_slot(t.from);
             cudaMemcpyKind kind = cudaMemcpyDeviceToDevice;
             if (t.from_ram) {
-                if ((from = srcp->blob(l, t.hot)) == nullptr) {
-                    e = "moving an expert out of the cache's tail: its RAM copy is gone";
-                    return false;
-                }
+                if ((from = srcp->blob(l, t.hot)) == nullptr)
+                    return give_up("moving an expert out of the cache's tail: its RAM copy is gone");
                 kind = cudaMemcpyHostToDevice;
                 ++from_ram;
             }
             if (cudaMemcpyAsync(xcache.device_slot(t.to), from, (size_t) lay.blob_bytes(l), kind, adapt_stream) !=
-                cudaSuccess) {
-                e = std::string("moving an expert out of the cache's tail: ") + cudaGetErrorString(cudaGetLastError());
-                return false;
-            }
-            r[t.hot] = t.to;
-            r[t.cold] = t.from;
+                cudaSuccess)
+                return give_up(std::string("moving an expert out of the cache's tail: ") +
+                               cudaGetErrorString(cudaGetLastError()));
+            done.push_back({r, t.hot, t.to, t.from});
             ++moved;
         }
     }
-    if (moved > 0 && cudaStreamSynchronize(adapt_stream) != cudaSuccess) {
-        e = std::string("moving experts out of the cache's tail: ") + cudaGetErrorString(cudaGetLastError());
-        return false;
+    if (moved > 0 && cudaStreamSynchronize(adapt_stream) != cudaSuccess)
+        return give_up(std::string("moving experts out of the cache's tail: ") + cudaGetErrorString(cudaGetLastError()));
+    for (const Moved& d : done) {
+        d.row[d.hot] = d.hot_slot;
+        d.row[d.cold] = d.cold_slot;
     }
     const std::string ram_note = from_ram > 0 ? std::to_string(from_ram) + " from RAM, " : std::string();
     basalt::log::info("basalt batch", "%s: %lld of the %lld routed experts in the cache's last %lld slots moved "
