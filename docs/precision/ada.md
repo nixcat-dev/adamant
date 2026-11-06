@@ -1,5 +1,7 @@
 # Ada execution and validation
 
+[简体中文](../zh/precision/ada.md)
+
 Adamant's Ada implementation is in early development. The Linux sm_89 Release build
 passes with CUDA 13.0.88, GCC 14.3.1, and warnings as errors. Runtime validation
 is incomplete; compilation does not establish numerical correctness. Upstream

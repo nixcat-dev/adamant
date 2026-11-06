@@ -1,5 +1,7 @@
 # Precision across builds
 
+[简体中文](../zh/precision/builds.md)
+
 Compiler parity between the Linux and Windows builds, and how to reproduce the numbers in this folder.
 
 ## Compiler parity

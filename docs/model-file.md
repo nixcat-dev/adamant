@@ -1,5 +1,7 @@
 # The .basalt model file
 
+[简体中文](zh/model-file.md)
+
 A model is one file. It holds everything the engine, the server and the vision sidecar load: the weights, the
 tokenizer and chat template, the MTP drafter, the 8-bit hyper-connection copies, the vision projector, and the GGUF
 metadata with the default sampling. It carries nothing that is engine policy: no flags (those come from `--config` or

@@ -1,5 +1,7 @@
 # Precision of the GDN mixer split
 
+[简体中文](../zh/precision/gdn-split.md)
+
 The decode-path tables are in [index.md](index.md); the quality method is in [quality.md](quality.md).
 
 ## What the split changes

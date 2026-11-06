@@ -1,5 +1,7 @@
 # Two-stage verify head
 
+[简体中文](../zh/precision/two-stage-head.md)
+
 The verify window's head reads every vocabulary row (248,320) for every column. Two heads run it in two stages: every
 row is screened first and only the rows that can reach the top of a column are scored exactly. A Q8_0 head screens on
 the top bits of its own codes with a proven bound, so every consumer reads the exact head's values; a Q6_K head screens

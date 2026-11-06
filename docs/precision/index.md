@@ -1,5 +1,7 @@
 # Precision and quality
 
+[简体中文](../zh/precision/index.md)
+
 **Adamant:** see [Ada execution and validation](ada.md) for the port's current
 paths and their validation state. The page below is inherited Basalt material;
 Adamant's own measurements are in the [README](../../README.md#measured-on-ada).
