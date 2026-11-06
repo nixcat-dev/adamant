@@ -352,6 +352,12 @@ int sessions(Context& context) {
         }
     }
 
+    // --read-beside runs a prompt read beside the slots' windows: with no slots there is nothing to run it beside
+    if (o.read_beside && o.batch < 2) {
+        basalt::log::warn("basalt generate", "--read-beside is off: it needs --serve and --batch 2 or more");
+        o.read_beside = false;
+    }
+
     // the drafter's K/V is elastic like the sessions' (MtpDrafter::load keeps it whole with a K/V per batch slot)
     basalt::core::qsa_set_kv_elastic(kv_floor);
     if (!slot0_is_solo)

@@ -203,6 +203,7 @@ plain decoding would give.
 | `parallel` | server | integer 1..8 | 1 | Serve N requests at once in batch slots; further requests wait their turn. `max-context` is shared: each slot holds `max-context / N` tokens. The slots' KV cache comes out of the expert cache. Sets the engine's `batch`. |
 | `slot-full-context` | server | switch | off | With `parallel`, give every slot the whole `max-context` instead of an equal share. Costs N times the KV cache. |
 | `batch` / `slots` | engine | integer 2..8 | off | The engine flag `parallel` sets. Use `parallel`; setting both is an error. |
+| `read-beside` | engine | switch | off | With `batch`: a prompt read short enough to take the GPU alone (under 16384 tokens) runs beside the decoding slots instead of holding them back, so their tokens keep coming while a new prompt is read. A read with no slot decoding takes the alone path, so one stream behaves exactly as before. The new prompt is read slower then (smaller chunks, the RAM-backed loan only); a conversation checkpoint inside such a read still pauses the windows. |
 
 ## Conversation cache
 

@@ -5,7 +5,11 @@ namespace basalt::program::serve {
 
 bool Request::read_part(int64_t a0, int64_t b0, std::string& e) {
     // (a layer split reads its stages as a pipeline over one run's chunks: in pieces only beside slots)
-    if (runtime_.o.batch <= 0 || runtime_.piped || (!runtime_.stages.empty() && !runtime_.batch_on()) || (b0 - a0 <= runtime_.kReadAlone && resumed_chunk <= 0)) {
+    // A short read takes the GPU alone (the CPU pool is free for its experts then) unless --read-beside is on and
+    // a slot is decoding: then it runs beside that slot's windows instead of holding them back.
+    const bool beside_small = runtime_.o.read_beside && runtime_.batch_on();
+    if (runtime_.o.batch <= 0 || runtime_.piped || (!runtime_.stages.empty() && !runtime_.batch_on()) ||
+        (b0 - a0 <= runtime_.kReadAlone && resumed_chunk <= 0 && !beside_small)) {
         // no window runs meanwhile, so the CPU pool is free: it takes its share of the streamed experts
         const bool lend_pool = runtime_.o.batch > 0 && !runtime_.multi_gpu && !runtime_.o.no_pool;
         if (lend_pool) { runtime_.sp.set_cpu_pool(&runtime_.pool); runtime_.sp.set_cpu_share(runtime_.o.prefill_cpu_share); }

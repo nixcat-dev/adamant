@@ -124,7 +124,10 @@ bool Request::lend(int64_t tokens, std::string& e, int64_t chunk, int64_t head) 
     if (runtime_.pf_parts.empty()) return true;                     // its own buffers: nothing to lend
     // the ring depth this read's layout uses; every size computed below (and the layout) follows it, and
     // the full depth is restored on the way out for the sizing done elsewhere
-    const bool beside = runtime_.batch_on() && (tokens > runtime_.kReadAlone || resumed_chunk > 0);
+    // --read-beside: a short read beside a decoding slot takes the beside path too (read_part's decision), so its
+    // ring depth and loan follow the same rule
+    const bool beside = runtime_.batch_on() &&
+                        (tokens > runtime_.kReadAlone || resumed_chunk > 0 || runtime_.o.read_beside);
     basalt::prefill::Prefill::set_ring_depth(beside ? runtime_.kRingDecoding : 1 << 20);
     struct RingReset { ~RingReset() { basalt::prefill::Prefill::set_ring_depth(1 << 20); } } ring_reset;
     // what this segment needs, capped by the configured chunk: a request lends only what its own

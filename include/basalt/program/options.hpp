@@ -169,6 +169,10 @@ struct Options {
     /// The --batch slots in this many groups pipelined through the stages of a layer split (stage k
     /// runs one group while stage k+1 runs another).  1 = every slot in one window, stage after stage.
     int batch_groups = 1;
+    /// --read-beside: a prompt read too short to pay for the side thread runs beside the slots' decode windows
+    /// anyway, whenever a slot is decoding, instead of holding them back.  A read with no slot decoding takes the
+    /// same path as without the flag, so one stream behaves as it always did.
+    bool read_beside = false;
     std::string spec_oracle;
     int spec_corrupt = 0;
     /// Names the model's draft layer when it has one (the file); empty means no drafter.
