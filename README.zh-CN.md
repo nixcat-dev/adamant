@@ -15,8 +15,9 @@ Adamant 是 [Basalt](https://github.com/jesdga95/basalt) 的 Ada Lovelace（RTX 
 
 ## 环境要求
 
-- 支持 AVX2 的 Linux x86-64（存在 AVX-512 时会使用它），以及一块带 CUDA 13 的 NVIDIA Ada Lovelace GPU（compute capability 8.9）。
-- CMake 3.24 或更新版本、GCC 13 或更新版本、Python 3.10 或更新版本。
+- 支持 AVX2 的 Linux x86-64（存在 AVX-512 时会使用它），或 Windows 10 1903+ x64（[平台](docs/zh/platforms.md)）。
+- 一块带 CUDA 13 的 NVIDIA Ada Lovelace GPU（compute capability 8.9）。
+- CMake 3.24 或更新版本、GCC 13 或更新版本（Linux）、Python 3.10 或更新版本。
 - 足够的系统 RAM，用来存放放不进 VRAM 的专家。
 
 ## 快速开始
@@ -33,12 +34,14 @@ hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --l
 
 二进制和文件格式的名称保持为 `basalt` 和 `.basalt`：这些 pack 仍然是 Basalt 读取的同一批文件，一个改名的分支会破坏所有现有模型。Adamant 是项目名，不是新格式。
 
-把你的设置写进 `basalt_config.json`，`model` 指向下载好的文件：
+把你的设置写进 `basalt_config.json`：`models` 列表列出多个 pack，每一项自己的 `gpu` 和 `kv` 优先于顶层的 `engine` 块（[模型与路由](docs/zh/configuration/models.md)）：
 
 ```json
 {
-  "server": { "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "port": 8080 },
-  "engine": { "expert-cache": "auto", "prefill": "auto", "kv": "int8", "resident-experts": true }
+  "version": 2,
+  "models": [{ "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "kv": "int8" }],
+  "engine": { "expert-cache": "auto", "prefill": "auto", "resident-experts": true },
+  "server": { "port": 8080 }
 }
 ```
 
@@ -63,20 +66,21 @@ bin/basalt serve --config basalt_config.json
 开箱即用的 pack，每一款的质量都对照全精度（BF16 参考）测量过，发布在
 [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) 上：
 `Qwen3.8-FN-NVFP4-DQ6_K`、`-NVFP4-DQ8`、`-UD-Q4_K_XL`、`-UD-Q5_K_XL`、`-UD-Q6_K_XL`、`-Q8_0`、`-GSQ-RCO-IQ3_S`、`-GSQ-RCO-IQ3_XXS` 和 `-GSQ-RCO-Q2_0`（每个都是 `.basalt`）。
-两个 NVFP4 pack 共用 NVIDIA 的 NVFP4 专家；`D` 表示 dense 投影的格式：DQ6_K 是默认值且更快，DQ8 在 prose 上约慢 7%，KLD 更低（[精度](docs/zh/precision/isolated-costs.md)）。
+两个 NVFP4 pack 共用 NVIDIA 的 NVFP4 专家；`D` 表示 dense 投影的格式：DQ6_K 是默认值且更快，DQ8 在 prose 上约慢 7%，KLD 更低（[精度](docs/zh/precision/qwen38-flash-next.md)）。
 一个模型就是一个文件：权重、分词器、MTP drafter、8-bit hyper-connection 副本和 vision projector。专家 profile 随引擎一起发布（[data/profiles](data/profiles)）。
 
 在 Ada 上，NVFP4 pack 经由整数 MMQ 路径运行，而不是原生 FP4 张量指令，因此其数值与 Blackwell 上的运行不同；IQ3_S、Q4_K 和 Q5_K 格式使用相同的 kernel。`Qwen3.8-FN-GSQ-RCO-IQ3_S` 是上述测量所用的量化，也是 24 GB 显卡的推荐起点。可以从 GGUF 在本地构建 pack，包括 drafter（[模型文件](docs/zh/model-file.md)、[Ada 上的精度](docs/zh/precision/ada.md)）。
 
 ## 文档
 
-- [配置](docs/zh/configuration/index.md)：每一项设置。
-- [运行](docs/zh/running.md)：并行请求、提示词分块、内存下限、图像输入。
-- [basalt-probe](docs/zh/probe.md)：测量机器和冷启动 decode 速度，并给出建议值。
-- [.basalt 模型文件](docs/zh/model-file.md)：布局说明，以及自己构建 pack（包括 NVFP4）。
-- [平台](docs/zh/platforms.md)：Linux 和 Windows 的要求、构建步骤和 Windows 的限制。
-- [更新日志](docs/zh/changelog/index.md)：每个版本改了什么。
-- [构建与测试](docs/zh/building.md)、[精度与质量](docs/zh/precision/index.md)、[贡献指南](CONTRIBUTING.zh-CN.md)。
+- **运行：**[运行](docs/zh/running.md)、[配置](docs/zh/configuration/index.md)、[模型与路由](docs/zh/configuration/models.md)、
+  [采样](docs/zh/configuration/sampling.md)、[图像来源](docs/zh/configuration/image-sources.md)、
+  [诊断](docs/zh/configuration/diagnostics.md)、[basalt-probe](docs/zh/probe.md)、[平台](docs/zh/platforms.md)。
+- **模型：**[模型](docs/zh/models/index.md)、[Flash-Next](docs/zh/models/qwen38-flash-next.md)、
+  [`.basalt` 文件](docs/zh/model-file.md)、[文件格式变更](docs/zh/basalt-file-changelog.md)。
+- **质量：**[精度](docs/zh/precision/index.md)、[方法](docs/zh/precision/quality.md)。
+- **构建与开发：**[构建与测试](docs/zh/building.md)、[新增模型](docs/zh/adding-a-model.md)、[社区实测](docs/zh/community.md)、
+  [更新日志](docs/zh/changelog/index.md)、[贡献指南](CONTRIBUTING.zh-CN.md)。
 
 ## 致谢
 

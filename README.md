@@ -17,15 +17,15 @@ Adamant is an Ada Lovelace (RTX 40-series, sm_89) fork of
 Experts that do not fit in VRAM live in system RAM, and optionally on a second GPU used as a peer expert tier.
 A large MoE model runs on one workstation, behind an OpenAI- and Anthropic-compatible API.
 
-**Help wanted:** have some spare compute to lend for testing? See [Contributing](CONTRIBUTING.md#other-ways-to-help).
-
 <p align="center"><img src="docs/img/frontend.gif" alt="The web UI while a reply streams" width="720"></p>
+
+**Help wanted:** have some spare compute to lend for testing? See [Contributing](CONTRIBUTING.md#other-ways-to-help).
 
 ## Requirements
 
-- Linux x86-64 with AVX2 (AVX-512 is used when present), and an NVIDIA Ada Lovelace GPU (compute capability 8.9) with CUDA 13.
-- CMake 3.24 or newer, GCC 13 or newer, and Python 3.10 or newer.
-- Enough system RAM to hold the experts that do not fit in VRAM.
+- Linux x86-64 with AVX2 (AVX-512 is used when present), or Windows 10 1903+ x64 ([platforms](docs/platforms.md)).
+- An NVIDIA Ada Lovelace GPU (compute capability 8.9) with CUDA 13.
+- CMake 3.24 or newer, GCC 13 or newer (Linux), Python 3.10 or newer, and enough system RAM for the experts that do not fit in VRAM.
 
 ## Quick start
 
@@ -45,12 +45,15 @@ The binary and file-format names stay `basalt` and `.basalt`: the packs are the
 same files Basalt reads, so a fork that renamed them would break every existing
 model. Adamant is the project name, not a new format.
 
-Put your settings in `basalt_config.json`, with `model` pointing at the downloaded file:
+Put your settings in `basalt_config.json`: the `models` list names the packs, and each entry's own `gpu` and `kv` win over the
+top-level `engine` block ([models and the router](docs/configuration/models.md)):
 
 ```json
 {
-  "server": { "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "port": 8080 },
-  "engine": { "expert-cache": "auto", "prefill": "auto", "kv": "int8", "resident-experts": true }
+  "version": 2,
+  "models": [{ "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "kv": "int8" }],
+  "engine": { "expert-cache": "auto", "prefill": "auto", "resident-experts": true },
+  "server": { "port": 8080 }
 }
 ```
 
@@ -58,7 +61,8 @@ Put your settings in `basalt_config.json`, with `model` pointing at the download
 bin/basalt serve --config basalt_config.json
 ```
 
-The server listens on 127.0.0.1 by default.
+The server listens on 127.0.0.1. Every setting: [configuration](docs/configuration/index.md). More examples:
+[example configurations](docs/configuration/examples.md).
 
 ## Measured on Ada
 
@@ -77,15 +81,16 @@ acceptance per content, not engine speed. No accuracy-reducing option is enabled
 
 ## Models
 
-<p align="center"><img src="docs/assets/basalt-format.png" alt="Inside a .basalt file" width="800"></p>
+| | Qwen3.8-Flash-Next |
+|---|---|
+| Packs | 9 packs, default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Context | default 8,192; `--max-context` sets it |
+| Drafting | MTP drafter in the pack, on; `--spec` default 8 |
+| Images | yes |
+| Guide | [guide](docs/models/qwen38-flash-next.md) |
+| Precision | [precision](docs/precision/qwen38-flash-next.md) |
 
-Ready-to-run packs, with the quality of each measured against full precision (a BF16 reference), are on
-[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt):
-`Qwen3.8-FN-NVFP4-DQ6_K`, `-NVFP4-DQ8`, `-UD-Q4_K_XL`, `-UD-Q5_K_XL`, `-UD-Q6_K_XL`, `-Q8_0`, `-GSQ-RCO-IQ3_S`, `-GSQ-RCO-IQ3_XXS` and `-GSQ-RCO-Q2_0` (each `.basalt`).
-The two NVFP4 packs share NVIDIA's NVFP4 experts; `D` names the dense projections' format: DQ6_K is the default and
-faster, DQ8 is about 7% slower on prose with a lower KLD ([precision](docs/precision/isolated-costs.md)).
-A model is one file: weights, tokenizer, MTP drafter, 8-bit hyper-connection copies and vision projector. The expert
-profile ships with the engine ([data/profiles](data/profiles)).
+All models compared: [models](docs/models/index.md).
 
 On Ada the NVFP4 packs run through the integer MMQ path rather than native FP4
 tensor instructions, so their numerics differ from a Blackwell run; the IQ3_S,
@@ -94,15 +99,16 @@ quant the measurements above used, and the recommended starting point on a
 24 GB card. A pack can be built locally from a GGUF, drafter included
 ([model file](docs/model-file.md), [precision on Ada](docs/precision/ada.md)).
 
-## Docs
+## Documentation
 
-- [Configuration](docs/configuration/index.md): every setting.
-- [Running](docs/running.md): parallel requests, prompt chunks, memory floors, image input.
-- [basalt-probe](docs/probe.md): measures the machine, the cold decode speed, and suggests values.
-- [The .basalt model file](docs/model-file.md): the layout, and building a pack yourself (including NVFP4).
-- [Platforms](docs/platforms.md): Linux and Windows requirements, the build steps and the Windows limitations.
-- [Changelog](docs/changelog/index.md): what each release changed.
-- [Building and testing](docs/building.md), [Precision and quality](docs/precision/index.md), [Contributing](CONTRIBUTING.md).
+- **Run:** [running](docs/running.md), [configuration](docs/configuration/index.md), [models and the router](docs/configuration/models.md),
+  [sampling](docs/configuration/sampling.md), [image sources](docs/configuration/image-sources.md),
+  [diagnostics](docs/configuration/diagnostics.md), [basalt-probe](docs/probe.md), [platforms](docs/platforms.md).
+- **Models:** [models](docs/models/index.md), [Flash-Next](docs/models/qwen38-flash-next.md),
+  [the `.basalt` file](docs/model-file.md), [file format changes](docs/basalt-file-changelog.md).
+- **Quality:** [precision](docs/precision/index.md), [method](docs/precision/quality.md).
+- **Build and develop:** [building](docs/building.md), [adding a model](docs/adding-a-model.md), [community runs](docs/community.md),
+  [changelog](docs/changelog/index.md), [contributing](CONTRIBUTING.md).
 
 ## Credits
 

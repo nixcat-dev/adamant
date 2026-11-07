@@ -9,57 +9,34 @@ Adamant 原生运行于 Linux x64 与 Windows x64，硬件为 NVIDIA Ada Lovelac
 
 | | Linux | Windows |
 | --- | --- | --- |
-| 操作系统 | x86-64，AVX2（有 AVX-512 时也会使用） | Windows 10 1903 或更新，x64 |
-| 编译器 | GCC 13 或更新 | Visual Studio 2022（MSVC 19.44） |
-| CUDA | 13 | 13 |
-| 构建 | CMake 3.24+ | CMake 3.24+ 与 Ninja |
-| Python | 3.10+ | 3.10+ |
+| 操作系统 | x86-64，AVX2（有 AVX-512 时也会使用） | Windows 10 1903+ x64 |
+| 编译器、构建 | GCC 13+、CMake 3.24+ | MSVC 19.44（VS 2022）、CMake 3.24+、Ninja |
+| CUDA、Python | 13、3.10+ | 13、3.10+ |
 | GPU | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） |
 
 ## 平台代码
 
-与操作系统相关的代码位于 `src/platform/`（声明在 `include/basalt/platform/`）以及 CMake 的 `WIN32` 块中。它们
-之外的 engine 代码不点名任何操作系统或编译器。`tools/check_platform_boundary.sh` 强制执行这一点。每个接缝在一
-个声明背后都有 Linux 与 Windows 两份实现，并在 `tests/platform/` 中有一个两边都运行的测试。
-
-| 接缝 | 头文件 | 封装内容 |
-| --- | --- | --- |
-| 文件 I/O | `file.hpp` | UTF-8 路径、打开、按位置读取、不带缓冲的文件描述符 |
-| 不带缓冲的读取 | `direct_file.hpp` | 异步的不带缓冲文件读取（n-gram 表） |
-| 文件视图 | `mapped_file.hpp` | 映射文件、预取与释放提示、加锁 |
-| 内存 | `memory.hpp` | RAM 探测、页面加锁、对齐与大页分配 |
-| CPU | `cpu.hpp` | 拓扑 |
-| 进程 | `process.hpp` | 启动、等待、终止、管道、信号 |
-| 系统 | `system.hpp`、`dynlib.hpp` | 进程内存、磁盘查询、后台全速运行、NVML 加载器 |
-| 编译器 | `compiler.hpp`、`format_check.hpp` | CPUID、位扫描、spin 提示、fp16 舍入、printf 格式检查 |
-| Win32 | `win.hpp` | 唯一引入 `windows.h` 的地方 |
-
-接收路径的程序带有 manifest（`src/platform/basalt.exe.manifest`），把进程代码页设为 UTF-8。超过普通 Win32
-长度限制的路径以其 `\\?\` 形式打开，因此系统长路径策略无论开关都能工作。
+与操作系统相关的代码只存在于 `src/platform/`、`include/basalt/platform/` 以及 CMake 的 `if(WIN32)` 块中。其他任何
+地方都不得出现 `_WIN32`、`_MSC_VER`、`__linux__`、`<windows.h>`、`<sys/mman.h>`、`<unistd.h>` 或裸 OS 调用
+（mmap、madvise、pread、pthread/affinity、fork/exec/pipe、dlopen、读 /proc 或 /sys）。`tools/check_platform_boundary.sh`
+会强制执行这一点。每个接缝都有 Linux 与 Windows 两份实现，Linux 实现就是你本来会写的那段代码，并在 `tests/platform/`
+中有一个两边都运行的测试。路径一律 UTF-8，并经过平台的文件调用。
 
 ## Windows 限制
 
-- WDDM 下 pinned memory 受驱动上限约束。整个 arena 无法注册时，pinned 切片被限制在 GPU 的共享内存额度内
-  （`RAM/2 - 8 GiB`），启动说明会写明被压缩到了哪里。
-- 大页需要"锁定内存页"特权，默认只授予 Administrators；锁定常驻专家副本需要"增加进程工作集"，该项授予
-  Users，因此无需提权即可工作。engine 启用其令牌持有的那一项。没有大页时退回 4 KiB 页，并在启动时说明。
-- 共享 arena 文件与 cgroup 配额不存在。engine 拒绝前者，并报称没有容器限制。
-- n-gram 表（`--ple-io direct`）经由文件缓存读取。文件被映射或经由缓存读取时，NTFS 对它的无缓冲读取一次只
-  完成一个，而模型文件两者皆是。读取带进来的表页属于缓存内存，程序需要时 Windows 会让出。
-- `basalt serve` 把 Python 服务器作为子进程运行，并以其退出码退出；Linux 上是替换进程。
-- 连接了显示器的 GPU 受驱动的超时恢复（TDR）约束。若长 kernel 被重置，请调高
+- WDDM 下 pinned memory 受驱动上限约束：整个 arena 无法注册时，pinned 切片被限制在 `RAM/2 - 8 GiB`。
+- 大页需要"锁定内存页"特权（Administrators）。没有该特权时 engine 使用 4 KiB 页，并在启动时说明。
+- 没有共享 arena 文件，也没有 cgroup 配额。`--ple-io direct` 经由文件缓存读取。
+- `basalt serve` 把 Python 服务器作为子进程运行。
+- 连接了显示器的 GPU 可能触发驱动的超时恢复（TDR）。请调高
   `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers` 下的 `TdrDelay`。
-- 同时驱动桌面的卡，其空闲 VRAM 会在不同次启动间浮动几个 MiB，自动定容的专家缓存因此可能落在不同的槽位数
-  上，贪心输出可能因运行而异。要可复现的输出（`tools/greedy_identity.py`），请固定 `expert-cache` 并调高
-  `vram-reserve-mib`。
-- Windows 上没有测量过质量。没有它的困惑度或 KL 散度记录；编译器一致性检查见
-  [precision/builds.md](precision/builds.md)。没有面向 Windows 的门面基准数字。
-
-Windows 依靠社区支持。请把 Windows 问题报为打了 `windows` 标签的 issue。
+- 同时驱动桌面的卡，其空闲 VRAM 会在不同次启动间浮动，贪心输出可能因运行而异。要可复现的输出，请固定
+  `expert-cache` 并调高 `vram-reserve-mib`。
+- Windows 上没有测量过质量，也没有面向它的官方基准数字。请把 Windows 问题报为打了 `windows` 标签的 issue。
 
 ## 在 Windows 上构建
 
-在 Developer 命令提示符中运行（或先调用 `vcvarsall.bat x64`），让 `cl.exe` 在 `PATH` 上：
+在 Developer 命令提示符中运行（或先调用 `vcvarsall.bat x64`）：
 
 ```bat
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
@@ -67,9 +44,14 @@ cmake --build build -j
 ctest --test-dir build -L cpu -j 8 --output-on-failure
 ```
 
-若测试创建样例失败，把 `TEMP` 与 `TMP` 指向构建目录树内的一个目录。`cpu_quota_test` 与 `pool_affinity_test`
-触及仅 Linux 的接口，不构建。
+若测试创建样例失败，把 `TEMP` 与 `TMP` 指向构建目录树内。CUDA 13.2+ 的头文件需要 `/Zc:preprocessor`；CMakeLists
+会给 nvcc 的主机编译器传这个 flag。
 
-CUDA 13.2 及更新版自带的 CCCL 头文件在 cl.exe 的传统预处理器下会 `#error`（C1189）；CMakeLists 给 nvcc 的主机
-编译器传 `/Zc:preprocessor`，已在 CUDA 13.4 与 MSVC 19.44 上验证。在本 CMakeLists 之外编译这些头文件的任何东西
-都需要同一个 flag。
+## 两个构建下的数值
+
+CPU 专家 kernel 在 Windows 上由 MSVC 编译，在 Linux 上由 GCC 编译。同一个 commit 下，`expert_parity` 与
+`pool_test` 在两个平台上都是 0 失败，pool 输出与串行运行逐位一致。
+
+贪心 token 在两个构建之间会有差异：固定专家层、关闭自适应换入换出时，`struct` 在 300 多个 token 上一致，
+`conv` 在第 23 个 token、`prose` 在第 44 个 token 分叉。同一个构建对自身运行时是一致的，因此差异来自主机
+编译器的 CPU 代码（占专家行的 78%）。Windows 构建的质量尚未运行（[精度](precision/quality.md)）。

@@ -4,7 +4,7 @@
 
 Adamant 的 Ada 实现尚处于开发早期。Linux sm_89 Release 构建已在 CUDA 13.0.88、GCC 14.3.1
 和警告视为错误的条件下编译通过。运行时验证尚不完备；能编译并不能确立数值正确性。
-[index.md](index.md) 及其链接页面中的上游测量结果不是 Adamant 的结果。
+[qwen38-flash-next.md](qwen38-flash-next.md) 及与其并列的页面中的上游测量结果不是 Adamant 的结果。
 
 ## 执行改动
 

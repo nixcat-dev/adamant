@@ -2,7 +2,7 @@
 
 [English](../building.md)
 
-克隆、要求和构建命令在 [README](../../README.zh-CN.md) 里。本页是其余内容。
+克隆、要求和构建命令在 [README](../../README.zh-CN.md) 里；Windows 见[平台](platforms.md)。本页是其余内容。
 
 ## 仓库里有什么
 
@@ -21,15 +21,16 @@
 
 测试默认关闭。用额外选项 `-DBUILD_TESTING=ON` 配置 README 中的构建，构建后运行 `ctest --test-dir build`。
 
-kernel 一致性测试需要 GPU；文件格式、缓存和内存单元测试不需要。`expert_parity` 和 `pool_test`
-在合成的专家 fixture 上运行；传 `--file experts.bin`（pack 的 experts section，不随包发布）可以检查真实的二进制块。
-`platform_memory_test` 在锁定内存上限（`ulimit -l`）允许时锁定 256 MiB，否则锁定更小的区域，
-并会说明；只有当上限低到什么都锁不住时才会跳过锁定用例。
+- kernel 一致性测试需要 GPU；文件格式、缓存和内存单元测试不需要。`expert_parity` 和 `pool_test`
+  在合成的专家 fixture 上运行；传 `--file experts.bin`（pack 的 experts section，不随包发布）可以检查真实的二进制块。
+  `platform_memory_test` 在锁定内存上限（`ulimit -l`）允许时锁定 256 MiB，否则锁定更小的区域，
+  并会说明；只有当上限低到什么都锁不住时才会跳过锁定用例。
+- 服务器测试：`pip install -r requirements-test.txt`（服务器的依赖）之后运行
+  `python -m unittest discover -s serve/tests -t .`。
+- 分词器一致性：用 `-DBASALT_TOKENIZER_DIR=<pack 的 tokenizer/ 目录>` 注册 `tokenizer_parity`。
 
-服务器测试在 `pip install -r requirements-test.txt`（服务器的依赖）之后用
-`python -m unittest discover -s serve/tests -t .` 运行。两个分词器测试读取 pack 的词表，没有
-pack 时跳过；同样的检查会在同一文件里用合成词表运行。用全部标志运行已构建引擎的那个测试需要
-`bin/basalt`。
+用全部标志运行已构建引擎的那个测试需要 `bin/basalt`。两个分词器测试读取 pack 的词表，没有
+pack 时跳过；同样的检查会在同一文件里用合成词表运行。
 
 引擎自己完成请求文本的分词（`GENT`）。`tokenizer_test` 在合成词表上检查 C++ 分词器；`tokenizer_parity`
 在一个语料库上把它产生的 id 与 `tools/tokenizer.py` 比较，当 cmake 拿到

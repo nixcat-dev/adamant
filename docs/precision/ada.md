@@ -5,7 +5,7 @@
 Adamant's Ada implementation is in early development. The Linux sm_89 Release build
 passes with CUDA 13.0.88, GCC 14.3.1, and warnings as errors. Runtime validation
 is incomplete; compilation does not establish numerical correctness. Upstream
-measurements in [index.md](index.md) and its linked pages are not Adamant results.
+measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages beside it are not Adamant results.
 
 ## Execution changes
 

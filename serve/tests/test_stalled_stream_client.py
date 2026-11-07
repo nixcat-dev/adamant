@@ -32,7 +32,7 @@ class StalledClient(unittest.TestCase):
             with mock.patch.object(handler_mod, "STREAM_WRITE_TIMEOUT_S", 0.5):
                 stuck.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
                 stuck.connect(("127.0.0.1", port))
-                body = json.dumps({"model": "qwen3.8-flash-next", "stream": True, "max_tokens": 400000,
+                body = json.dumps({"model": "basalt", "stream": True, "max_tokens": 400000,
                                    "messages": [{"role": "user", "content": "go"}]}).encode()
                 stuck.sendall(b"POST /v1/chat/completions HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                               b"Content-Type: application/json\r\nContent-Length: " + str(len(body)).encode()
@@ -47,7 +47,7 @@ class StalledClient(unittest.TestCase):
                     time.sleep(0.05)
                 self.assertFalse(svc.status.get("busy"), "the turn is still held by a client that does not read")
                 req = urllib.request.Request(f"http://127.0.0.1:{port}/v1/chat/completions",
-                                             data=json.dumps({"model": "qwen3.8-flash-next", "max_tokens": 16,
+                                             data=json.dumps({"model": "basalt", "max_tokens": 16,
                                                               "messages": [{"role": "user", "content": "go"}]}).encode(),
                                              headers={"Content-Type": "application/json"})
                 with urllib.request.urlopen(req, timeout=30) as r:

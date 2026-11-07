@@ -6,9 +6,11 @@
 
 ## 添加你的运行
 
-1. 停掉所有正在运行的 Basalt 服务器（GPU 必须空闲），然后运行 `basalt-bench --community`。它会启动自己的引擎（三次，每次测量一个），在每次启动期间通过 stderr 显示加载进度，把它的行加进 `docs/community/benchmarks.json` 并打印出来。它使用每一块可见的 Ada GPU：第二块卡成为对等卡，`CUDA_VISIBLE_DEVICES=0` 则得到单卡行。
+1. 停掉所有正在运行的 Basalt 服务器（GPU 必须空闲），然后运行 `basalt-bench --community --model PACK`。它会启动自己的引擎（三次，每次测量一个），在每次启动期间通过 stderr 显示加载进度，把它的行加进 `docs/community/benchmarks.json` 并打印出来。它使用每一块可见的 Ada GPU：第二块卡成为对等卡，`CUDA_VISIBLE_DEVICES=0` 则得到单卡行。
 2. `--submitter NAME` 是必填项：你想显示的名字（不含空格的一个名字，最多 40 个字符；不做核实）。`notes`（最多 200 个字符）是可选的，需手动添加。
 3. 检查 `docs/community/benchmarks.json` 中的这一行，提交它并开一个 pull request。如果 bench 无法写入文件，它会打印这一行并说明粘贴到哪里。
+
+这一行记录 `model`（`Qwen3.8-Flash-Next`，即模型的 adapter 为 pack 的架构报告的名字，而不是文件名）和 `kv`，即这次运行使用的 KV 缓存格式：预设会要求 `--kv int8`，模型没有这个选项时就用模型自己的格式。
 
 你需要足够的空闲 RAM，保证没有任何专家从 SSD 读取；bench 会检查这一点，否则拒绝打印结果行。
 

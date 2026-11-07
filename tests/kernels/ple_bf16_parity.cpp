@@ -2,7 +2,7 @@
 // per-row and 16-row paths against the same oracle.  bf16 is the top half of an f32, so this is exact: the
 // expected maximum error is zero, not a tolerance.
 #include "basalt/artifact/gguf_reader.hpp"
-#include "basalt/kernels/ngram.hpp"
+#include "basalt/models/qwen4exp/kernels/ngram.hpp"
 
 #include <algorithm>
 #include <cmath>

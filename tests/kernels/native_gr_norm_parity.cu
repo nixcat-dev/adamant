@@ -1,6 +1,6 @@
 // Native GR RMSNorm prefetch parity and microbenchmark.
 
-#include "basalt/kernels/native_gr_norm.hpp"
+#include "basalt/models/qwen4exp/kernels/native_gr_norm.hpp"
 
 #include <cuda_runtime.h>
 

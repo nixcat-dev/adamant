@@ -30,7 +30,7 @@ class AnthropicOverflowWording(unittest.TestCase):
         httpd = serve(svc, port=0)
         try:
             req = urllib.request.Request(f"http://127.0.0.1:{httpd.server_address[1]}{path}",
-                                         data=json.dumps({"model": "qwen3.8-flash-next", **body}).encode(),
+                                         data=json.dumps({"model": "basalt", **body}).encode(),
                                          headers={"Content-Type": "application/json"})
             try:
                 with urllib.request.urlopen(req, timeout=30) as r:

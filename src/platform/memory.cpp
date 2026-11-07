@@ -157,7 +157,6 @@ uint64_t available_memory() {
     memory_status(avail, total);
     return avail;
 }
-
 #else
 namespace {
 // One "<key>: <n> kB" line of /proc/meminfo in bytes (0 when absent).
@@ -175,36 +174,19 @@ uint64_t available_memory() { return meminfo_bytes("MemAvailable"); }
 #endif
 
 namespace {
-// The memory guard's floor: 1024 MiB of RAM left alone until --ram-margin-mib says how much the rest of the machine
-// needs.
-std::atomic<uint64_t> g_ram_margin{1024ull << 20};
+std::atomic<uint64_t> g_ram_reserve{kDefaultRamReserveBytes};
 }  // namespace
 
-uint64_t ram_margin() { return g_ram_margin.load(std::memory_order_relaxed); }
+uint64_t ram_reserve() { return g_ram_reserve.load(); }
 
-void set_ram_margin(uint64_t bytes) { g_ram_margin.store(bytes, std::memory_order_relaxed); }
-
-uint64_t ram_hard_floor() {
-    const uint64_t margin = ram_margin();
-    return margin < kRamHardFloor ? margin : kRamHardFloor;
-}
-
-uint64_t commit_headroom() {
-#if defined(_WIN32)
-    MEMORYSTATUSEX ms{};
-    ms.dwLength = sizeof ms;
-    return GlobalMemoryStatusEx(&ms) ? (uint64_t) ms.ullAvailPageFile : 0;
-#else
-    return available_memory();
-#endif
-}
+void set_ram_reserve(uint64_t bytes) { g_ram_reserve = bytes; }
 
 uint64_t ram_budget(bool* known) {
     const uint64_t avail = available_memory();
     if (known) *known = avail > 0;
     if (avail == 0) return UINT64_MAX;
-    const uint64_t margin = ram_margin();
-    return avail > margin ? avail - margin : 0;
+    const uint64_t reserve = ram_reserve();
+    return avail > reserve ? avail - reserve : 0;
 }
 
 namespace {
@@ -214,7 +196,7 @@ std::atomic<bool> g_resident_mode{false};
 std::atomic<uint64_t> g_resident_copy{0};
 }  // namespace
 
-std::string ram_exhausted_message(uint64_t avail, bool resident, uint64_t copy_bytes, uint64_t margin) {
+std::string ram_exhausted_message(uint64_t avail, bool resident, uint64_t copy_bytes, uint64_t reserve) {
     const unsigned long long mib = (unsigned long long) (avail >> 20);
     char buf[384];
     if (!resident) {
@@ -226,8 +208,8 @@ std::string ram_exhausted_message(uint64_t avail, bool resident, uint64_t copy_b
                                        "%llu MiB, so something else is holding the memory (other programs, or file "
                                        "pages read while loading)", mib, (unsigned long long) (copy_bytes >> 20));
     } else {
-        // the copy shrunk by what the margin is short of leaves the margin free again
-        const uint64_t keep = copy_bytes - std::min(copy_bytes, margin > avail ? margin - avail : 0);
+        // the copy shrunk by what the reserve is short of leaves the reserve free again
+        const uint64_t keep = copy_bytes - std::min(copy_bytes, reserve > avail ? reserve - avail : 0);
         std::snprintf(buf, sizeof buf, "basalt error: RAM ran out loading (%llu MiB free); use --resident-budget-gib %llu",
                       mib, (unsigned long long) std::max<uint64_t>(1, keep >> 30));
     }
@@ -247,7 +229,7 @@ void start_memory_watchdog(uint64_t floor_bytes) {
             const uint64_t avail = available_memory();
             if (avail > 0 && avail < floor_bytes) {
                 basalt::log::error("basalt", "%s", ram_exhausted_message(avail, g_resident_mode.load(), g_resident_copy.load(),
-                                                                   ram_margin()).c_str());
+                                                                   ram_reserve()).c_str());
                 _exit(1);
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -307,7 +289,7 @@ std::string ram_stop_message(uint64_t avail, uint64_t floor, uint64_t hard, cons
                       (unsigned long long) (floor >> 20));
     char tail[160] = "";
     if (own > others)
-        std::snprintf(tail, sizeof tail, "; lower --ram-margin-mib or --resident-budget-gib");
+        std::snprintf(tail, sizeof tail, "; lower --resident-budget-gib");
     else if (others >= (1ull << 20))
         std::snprintf(tail, sizeof tail, "; other programs took %llu MiB since the engine was ready",
                       (unsigned long long) (others >> 20));
@@ -344,7 +326,7 @@ void guard_judge(uint64_t avail) {
     const uint64_t below_ms = g_below.update(
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count(),
         ram_below_floor(avail, floor));
-    const RamLevel level = ram_level(avail, floor, ram_hard_floor(), stalls, below_ms);
+    const RamLevel level = ram_level(avail, floor, kRamHardFloor, stalls, below_ms);
     const RamLevel was = g_judged;
     {
         std::lock_guard<std::mutex> lock(g_guard_mu);
@@ -358,8 +340,8 @@ void guard_judge(uint64_t avail) {
         basalt::log::warn("basalt", "RAM low: %llu MiB free < %llu MiB guard", mib, (unsigned long long) (floor >> 20));
     if (level == RamLevel::Critical && was != RamLevel::Critical && stalls.known)
         basalt::log::warn("basalt", "RAM critical: %llu MiB free, hard floor %llu MiB, memory stalls some "
-                          "%.0f%% full %.0f%%", mib, (unsigned long long) (ram_hard_floor() >> 20), stalls.some, stalls.full);
-    if (level == RamLevel::Critical && was != RamLevel::Critical && !stalls.known && avail >= ram_hard_floor())
+                          "%.0f%% full %.0f%%", mib, (unsigned long long) (kRamHardFloor >> 20), stalls.some, stalls.full);
+    if (level == RamLevel::Critical && was != RamLevel::Critical && !stalls.known && avail >= kRamHardFloor)
         basalt::log::warn("basalt", "RAM critical: %llu MiB free, below the %llu MiB guard for %llu s", mib,
                           (unsigned long long) (floor >> 20), (unsigned long long) (below_ms / 1000));
     if (level == RamLevel::Low && was == RamLevel::Critical)

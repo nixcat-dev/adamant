@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Adamant is a local inference engine for the Qwen3.8-Flash-Next mixture-of-experts model, built for NVIDIA Ada Lovelace (sm_89) on Linux and Windows x64. It runs on an Ada GPU, optionally with a second GPU as a peer expert tier, and system RAM holding the rest. It is a fork of Basalt (MIT), which is a fork of Strata (MIT): the C++/CUDA engine is in `src/` and `include/`, and the Python server with an OpenAI- and Anthropic-compatible API is in `serve/`.
+Adamant is a local inference engine for the Qwen3.8-Flash-Next mixture-of-experts model, built for NVIDIA Ada Lovelace (sm_89) on Linux and Windows x64. It runs on an Ada GPU, optionally with a second GPU as a peer expert tier, and system RAM holding the rest. It is a fork of Basalt (MIT), which is a fork of Strata (MIT): the C++/CUDA engine is in `src/` and `include/`, each model's own code under `src/models/<model>`, and the Python server with an OpenAI- and Anthropic-compatible API is in `serve/`.
 
 ## Working rules
 
