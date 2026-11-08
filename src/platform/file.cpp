@@ -124,13 +124,6 @@ std::string module_path() {
     return to_utf8(exe);
 }
 
-std::string module_dir() {
-    const std::string path = module_path();
-    if (path.empty()) return std::string();
-    const size_t cut = path.find_last_of("\\/");
-    return cut == std::string::npos ? std::string() : path.substr(0, cut);
-}
-
 std::string temp_dir() {
     wchar_t dir[MAX_PATH];
     const DWORD cap = (DWORD) (sizeof dir / sizeof dir[0]);
@@ -302,13 +295,6 @@ std::string module_path() {
     return std::string(exe);
 }
 
-std::string module_dir() {
-    const std::string path = module_path();
-    if (path.empty()) return std::string();
-    const size_t cut = path.find_last_of("/");
-    return cut == std::string::npos ? std::string() : path.substr(0, cut);
-}
-
 std::string temp_dir() {
     return "/tmp";
 }
@@ -465,6 +451,16 @@ bool pread_all(int fd, void* dst, uint64_t n, uint64_t off) {
         n -= (uint64_t) got;
     }
     return true;
+}
+
+std::string install_root() {
+    std::string dir = module_path();
+    for (int up = 0; up < 2; ++up) {   // the executable's name, then its directory
+        const size_t cut = dir.find_last_of("/\\");
+        if (cut == std::string::npos || cut == 0) return std::string();
+        dir.resize(cut);
+    }
+    return dir;
 }
 
 }  // namespace basalt::platform

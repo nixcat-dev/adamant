@@ -1,5 +1,7 @@
 // The whole start of a Flash-Next engine, in order: its stack frames hold the resources while the server runs.
+#include "basalt/core/shipped_profiles.hpp"
 #include "basalt/models/qwen4exp/shared_names.hpp"
+#include "basalt/platform/file.hpp"
 #include "context.hpp"
 #include "../../../program/generate/run.hpp"
 #include "models/qwen4exp/adapter.hpp"
@@ -35,24 +37,16 @@ int run_engine(Options& o, std::vector<program::GpuCard>& chosen_cards) {
             }
         } else {
             const std::string key = cli::profile_key(model_file.meta());
-            const std::string name = "/data/profiles/" + key + ".prof";
-            const std::string beside = basalt::platform::module_dir();
-            std::vector<std::string> candidates;
-            if (!key.empty() && !beside.empty()) candidates.push_back(beside + "/.." + name);
-            if (!key.empty()) candidates.push_back(std::string(BASALT_SOURCE_DIR) + name);
-            for (const std::string& prof : candidates)
-                if (basalt::platform::file_size(prof, prof_bytes) && prof_bytes > 0) {
-                    o.expert_profile = prof;
-                    break;
-                }
-            if (o.expert_profile.empty()) {
+            const std::string miss = basalt::core::missing_shipped_profile(basalt::platform::install_root() + "/data/profiles", cli::shipped_profiles(key));
+            if (!miss.empty()) return fatal_start_error(miss);
+            const std::string prof = basalt::platform::install_root() + "/data/profiles/" + key + ".prof";
+            if (!key.empty() && basalt::platform::file_size(prof, prof_bytes) && prof_bytes > 0) o.expert_profile = prof;
+            else {
                 basalt::log::info("basalt generate", "no expert profile for %s", key.empty() ? "this model" : key.c_str());
                 if (o.resident_cpu_experts) {
-                    std::string looked;
-                    for (const std::string& prof : candidates) looked += (looked.empty() ? "" : ", ") + prof;
                     basalt::log::error("basalt generate", "expert profile not found: %s; ship data/profiles with the engine "
                                        "(or pass --mmap-experts without --resident-experts)",
-                                       key.empty() ? "the model names no architecture or layer and expert counts" : looked.c_str());
+                                       key.empty() ? "the model names no architecture or layer and expert counts" : prof.c_str());
                     return 2;
                 }
             }

@@ -8,7 +8,7 @@
 | | Qwen3.8-Flash-Next |
 | --- | --- |
 | 架构 id | `qwen4exp` |
-| Pack | 11 个 pack，默认 `Qwen3.8-FN-NVFP4-DQ6_K`，[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Pack | 默认 `Qwen3.8-FN-NVFP4-DQ6_K`，[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
 | 层、专家 | 48 层（36 层 GDN，12 层 QSA）；每层 512 个专家，top-10 |
 | 上下文 | 默认 8,192；用 `--max-context` 设置 |
 | Drafting | pack 内的 MTP drafter，默认开启；`--spec` 默认 8 |

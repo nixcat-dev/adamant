@@ -7,7 +7,7 @@
 
 ## Pack
 
-[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) 上有十一个 pack，名字都是 `Qwen3.8-FN-` 加后缀：
+[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) 上的 pack，名字都是 `Qwen3.8-FN-` 加后缀：
 
 - `NVFP4-DQ6_K`（默认）与 `NVFP4-DQ8`：NVIDIA 的 NVFP4 专家。`D` 是稠密投影的格式：Q6_K，DQ8 则是 Q8_0。
   DQ8 比 DQ6_K 慢，KLD 更低（[精度](../precision/qwen38-flash-next.md#6-bit-稠密投影)）。

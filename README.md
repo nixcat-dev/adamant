@@ -83,7 +83,7 @@ acceptance per content, not engine speed. No accuracy-reducing option is enabled
 
 | | Qwen3.8-Flash-Next |
 |---|---|
-| Packs | 11 packs, default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Packs | default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
 | Context | default 8,192; `--max-context` sets it |
 | Drafting | MTP drafter in the pack, on; `--spec` default 8 |
 | Images | yes |

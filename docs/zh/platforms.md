@@ -14,6 +14,25 @@ Adamant 原生运行于 Linux x64 与 Windows x64，硬件为 NVIDIA Ada Lovelac
 | CUDA、Python | 13、3.10+ | 13、3.10+ |
 | GPU | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） |
 
+## 发布归档
+
+`tools/package_release.py` 把已构建的目录树打包成 `basalt-vX.Y.Z-linux-x64.tar.gz` 或 `basalt-vX.Y.Z-windows-x64.zip`：
+`bin/`（`basalt`、`basalt-bench`、`basalt-probe`、`basalt-vision`）、`serve/`、`tools/`（服务器导入的部分）、`data/`、`docs/`、
+`requirements.txt` 和许可证。归档里不含 CUDA 库，也不含 Python 环境。需要：
+
+- R580 分支或更新的 NVIDIA 驱动。归档用 CUDA 13.0.2 构建，其 Linux 最低版本是 580.95.05；NVIDIA 自 13.0 起不再给出
+  Windows 最低版本，所以在 Windows 上请用较新的驱动。
+- 库路径上的 CUDA 13 运行时库（cudart、cuBLAS）（Windows 上在 `PATH` 中）。
+- Python 3.10+，并在归档顶层目录的 `.venv` 中装好依赖；`bin/basalt serve` 在它存在时会使用它：
+
+```sh
+cd basalt-vX.Y.Z-linux-x64                   # tar xzf the archive first; on Windows unzip it
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+```
+
+Windows 上：`py -3 -m venv .venv`，然后 `.venv\Scripts\pip install -r requirements.txt`。之后从模型下载那一步起照 README 的
+快速开始做：`bin/basalt serve --config basalt_config.json`。请在顶层目录运行 `basalt-bench`（它读取 `data/bench`）。
+
 ## 平台代码
 
 与操作系统相关的代码只存在于 `src/platform/`、`include/basalt/platform/` 以及 CMake 的 `if(WIN32)` 块中。其他任何

@@ -6,7 +6,7 @@ switch. Several entries can share one address ([router](../configuration/models.
 | | Qwen3.8-Flash-Next |
 | --- | --- |
 | Architecture id | `qwen4exp` |
-| Packs | 11 packs, default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Packs | default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
 | Layers, experts | 48 (36 GDN, 12 QSA); 512 per layer, top-10 |
 | Context | default 8,192; `--max-context` sets it |
 | Drafting | MTP drafter in the pack, on; `--spec` default 8 |
