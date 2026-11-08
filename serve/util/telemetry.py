@@ -159,6 +159,16 @@ class _CpuRamFallback:
         return max(0.0, min(100.0, 100.0 * (1 - (cur[0] - prev[0]) / (cur[1] - prev[1]))))
 
     @staticmethod
+    def swap():
+        try:
+            info = dict(line.split(":", 1) for line in open("/proc/meminfo"))
+            total = int(info["SwapTotal"].split()[0]) * 1024
+            free = int(info["SwapFree"].split()[0]) * 1024
+            return total - free, total
+        except (OSError, KeyError, ValueError):
+            return None, None
+
+    @staticmethod
     def ram():
         try:
             info = dict(line.split(":", 1) for line in open("/proc/meminfo"))
@@ -187,7 +197,8 @@ class Telemetry:
         driver_version(), cuda_version()."""
         self.extra = extra
         self.lock = threading.Lock()
-        self.now: dict = {"gpus": [], "cpu": None, "ram_used": None, "ram_total": None, "disk_read_mb": None}
+        self.now: dict = {"gpus": [], "cpu": None, "ram_used": None, "ram_total": None,
+                          "swap_used": None, "swap_total": None, "disk_read_mb": None}
         self.hist = {k: collections.deque(maxlen=HISTORY) for k in SERIES}
         self.slot_hist = collections.deque(maxlen=HISTORY)     # per sample: each slot's tok/s
         self.gpus = [(i, g) for i, g in ((i, gpu_factory(i)) for i in dict.fromkeys(gpu_indices or [0])) if g.ok()]
@@ -241,16 +252,20 @@ class Telemetry:
                 r = {}
             s["gpus"].append({"index": i, **{k: r.get(k) for k in GPU_KEYS}})
         s["cpu"] = s["ram_used"] = s["ram_total"] = None
+        s["swap_used"] = s["swap_total"] = None
         if self.ps:
             try:
                 s["cpu"] = self.ps.cpu_percent(interval=None)
                 vm = self.ps.virtual_memory()
                 s["ram_used"], s["ram_total"] = vm.total - vm.available, vm.total
+                sm = self.ps.swap_memory()
+                s["swap_used"], s["swap_total"] = sm.used, sm.total
             except (OSError, RuntimeError):
                 pass
         else:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
+            s["swap_used"], s["swap_total"] = self.fallback.swap()
         s["disk_read_mb"] = self._disk()
         if self.extra:
             try:
