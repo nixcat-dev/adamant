@@ -26,7 +26,7 @@ class AnthropicOverflowWording(unittest.TestCase):
     def post(self, path, body):
         tok = ByteTokenizer()
         eng = MockEngine(tok, "xy", max_context=CTX)
-        svc = Service(eng, tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        svc = Service(eng, tok, ChatTemplate.from_file(ROOT / "serve/chat_template.jinja"))
         httpd = serve(svc, port=0)
         try:
             req = urllib.request.Request(f"http://127.0.0.1:{httpd.server_address[1]}{path}",

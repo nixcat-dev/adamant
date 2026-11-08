@@ -24,7 +24,7 @@ class StalledClient(unittest.TestCase):
     def test_a_client_that_stops_reading_gives_the_turn_back(self):
         tok = ByteTokenizer()
         engine = MockEngine(tok, " ".join(str(i) for i in range(80000)), max_context=2_000_000)
-        svc = Service(engine, tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        svc = Service(engine, tok, ChatTemplate.from_file(ROOT / "serve/chat_template.jinja"))
         httpd = serve(svc, port=0)
         port = httpd.server_address[1]
         stuck = socket.socket()
