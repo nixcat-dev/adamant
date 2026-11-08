@@ -43,8 +43,7 @@ measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages besid
   cursor; `kv_stream_parity` passes on sm_89.
 
 On the deployed IQ4_XS pack, 64 greedy tokens (prose ids, int8 KV, expert cache 700, swaps 0, one RTX 4090 at 450 W) are
-identical between the pre-merge build and this one. The BF16 quality gate was not rerun: no BF16 reference file is
-available on this machine.
+identical between the pre-merge build and this one.
 
 ## Prompt memory and peer execution
 

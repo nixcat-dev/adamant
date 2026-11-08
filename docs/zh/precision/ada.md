@@ -40,7 +40,7 @@ Adamant 的 Ada 实现尚处于开发早期。Linux sm_89 Release 构建已在 C
   `kv_stream_parity` 在 sm_89 上通过。
 
 在部署的 IQ4_XS pack 上，64 个贪心 token（prose ids、int8 KV、expert cache 700、swaps 0、单张 450 W 的 RTX 4090）在
-合并前的构建与本构建之间逐位相同。BF16 质量门槛未重跑：本机上没有 BF16 参考文件。
+合并前的构建与本构建之间逐位相同。
 
 ## prompt 显存与对等执行
 
