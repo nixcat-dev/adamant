@@ -14,6 +14,7 @@ import threading
 import time
 
 HISTORY = 60
+HWMON_ROOT = "/sys/class/hwmon"
 
 
 # ------------------------------------------------------------------------------------------------ NVML
@@ -179,6 +180,55 @@ class _CpuRamFallback:
             return None, None
 
 
+class _Hwmon:
+    """CPU package and DIMM temperatures from sysfs hwmon; the sensor paths are found once, the values read every time."""
+
+    def __init__(self, root=HWMON_ROOT):
+        self.cpu_inputs, self.ram_inputs = [], []
+        try:
+            chips = sorted(os.listdir(root))
+        except OSError:
+            return
+        for chip in chips:
+            d = os.path.join(root, chip)
+            try:
+                name = self._text(os.path.join(d, "name"))
+                inputs = sorted(f for f in os.listdir(d) if f.startswith("temp") and f.endswith("_input"))
+            except OSError:
+                continue
+            if name == "coretemp" and not self.cpu_inputs:
+                package = [f for f in inputs if self._label(d, f) == "Package id 0"]
+                self.cpu_inputs = [os.path.join(d, f) for f in package or inputs]
+            elif name == "spd5118":
+                self.ram_inputs += [os.path.join(d, f) for f in inputs]
+
+    @staticmethod
+    def _text(path):
+        with open(path, encoding="utf-8") as f:
+            return f.read().strip()
+
+    def _label(self, d, input_name):
+        try:
+            return self._text(os.path.join(d, input_name[:-len("_input")] + "_label"))
+        except OSError:
+            return None
+
+    def _max(self, paths):
+        temps = []
+        for p in paths:
+            try:
+                temps.append(int(self._text(p)) / 1000.0)
+            except (OSError, ValueError):
+                continue
+        return max(temps) if temps else None
+
+    def cpu(self):
+        return self._max(self.cpu_inputs)
+
+    def ram(self):
+        return self._max(self.ram_inputs)
+
+
 # ------------------------------------------------------------------------------------------------ the sampler
 GPU_KEYS = ("util", "mem_used", "mem_total", "temp", "power", "power_limit", "pcie_gen", "pcie_gen_max", "pcie_width",
             "pcie_rx_mb", "pcie_tx_mb")
@@ -191,14 +241,15 @@ def _r2(v):
 
 
 class Telemetry:
-    def __init__(self, extra=None, gpu_indices=None, gpu_factory=gpu_reader):
+    def __init__(self, extra=None, gpu_indices=None, gpu_factory=gpu_reader, hwmon_root=HWMON_ROOT):
         """`extra()` returns the server's own speeds, recorded each second. `gpu_indices`: the engine's cards
         (NVML numbering); `gpu_factory(index)` returns a reader with ok(), read(), name() and optionally
-        driver_version(), cuda_version()."""
+        driver_version(), cuda_version(). `hwmon_root` is where the CPU and DIMM temperatures are read."""
         self.extra = extra
         self.lock = threading.Lock()
         self.now: dict = {"gpus": [], "cpu": None, "ram_used": None, "ram_total": None,
-                          "swap_used": None, "swap_total": None, "disk_read_mb": None}
+                          "swap_used": None, "swap_total": None, "cpu_temp": None, "ram_temp": None,
+                          "disk_read_mb": None}
         self.hist = {k: collections.deque(maxlen=HISTORY) for k in SERIES}
         self.slot_hist = collections.deque(maxlen=HISTORY)     # per sample: each slot's tok/s
         self.gpus = [(i, g) for i, g in ((i, gpu_factory(i)) for i in dict.fromkeys(gpu_indices or [0])) if g.ok()]
@@ -209,6 +260,7 @@ class Telemetry:
         except ImportError:
             self.ps = None
         self.fallback = _CpuRamFallback()
+        self.hwmon = _Hwmon(hwmon_root)
         first = self.gpus[0][1] if self.gpus else None
         self.static = {
             "gpus": [{"index": i, "name": g.name()} for i, g in self.gpus],
@@ -266,6 +318,7 @@ class Telemetry:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
             s["swap_used"], s["swap_total"] = self.fallback.swap()
+        s["cpu_temp"], s["ram_temp"] = self.hwmon.cpu(), self.hwmon.ram()
         s["disk_read_mb"] = self._disk()
         if self.extra:
             try:

@@ -84,7 +84,7 @@ class Http(unittest.TestCase):
         self.assertEqual(m["live"]["queue"], [])
         self.assertEqual((m["live"]["state"], m["live"]["queued"]), ("idle", 0))
         self.assertEqual(m["requests"], [])
-        self.assertEqual(set(m["hardware"]), {"gpus", "cpu", "ram_used", "ram_total", "swap_used", "swap_total", "disk_read_mb"})
+        self.assertEqual(set(m["hardware"]), {"gpus", "cpu", "ram_used", "ram_total", "swap_used", "swap_total", "cpu_temp", "ram_temp", "disk_read_mb"})
         self.assertIsInstance(m["hardware"]["gpus"], list)
         self.assertEqual(set(m["hardware_static"]), {"gpus", "cpu_name", "cores", "threads", "driver", "cuda"})
         self.assertEqual(set(m["history"]), {"tok_s", "prefill_tok_s_mean", "slot_tok_s", "gpus"})
@@ -275,7 +275,7 @@ class PerGpu(unittest.TestCase):
         self.assertEqual((snap["static"]["driver"], snap["static"]["cuda"]), ("610.57.04", "13.3"))
         self.assertEqual(set(snap["static"]), {"gpus", "cpu_name", "cores", "threads", "driver", "cuda"})
         self.assertEqual(set(snap["history"]), {"tok_s", "prefill_tok_s_mean", "slot_tok_s", "gpus"})
-        self.assertEqual(set(snap["now"]), {"gpus", "cpu", "ram_used", "ram_total", "swap_used", "swap_total", "disk_read_mb"})
+        self.assertEqual(set(snap["now"]), {"gpus", "cpu", "ram_used", "ram_total", "swap_used", "swap_total", "cpu_temp", "ram_temp", "disk_read_mb"})
 
     def test_history_keeps_the_speeds_slots_and_cards(self):
         tel = self.sampler(extra=lambda: {"tok_s": 12.3456, "prefill_tok_s_mean": None, "tok_s_mean": 9,
@@ -322,6 +322,74 @@ class PerGpu(unittest.TestCase):
         nv.lib = object()
         self.assertIsNone(nv.cuda_version())
         self.assertIsNone(nv.driver_version())
+
+
+class HostTemps(unittest.TestCase):
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+
+    def chip(self, n, name, temps, labels=None):
+        d = self.root / f"hwmon{n}"
+        d.mkdir()
+        (d / "name").write_text(name + "\n")
+        for i, v in temps.items():
+            (d / f"temp{i}_input").write_text(v if isinstance(v, str) else f"{v}\n")
+        for i, label in (labels or {}).items():
+            (d / f"temp{i}_label").write_text(label + "\n")
+        return d
+
+    def sample(self):
+        tel = Telemetry(gpu_indices=[], gpu_factory=FakeGpu, hwmon_root=str(self.root))
+        self.addCleanup(tel.stop)
+        return tel.sample()
+
+    def test_cpu_temp_is_the_package_sensor(self):
+        self.chip(0, "nvme", {1: 30000})
+        self.chip(1, "coretemp", {1: 78000, 2: 91000, 3: 70000},
+                  {1: "Package id 0", 2: "Core 0", 3: "Core 1"})
+        s = self.sample()
+        self.assertEqual(s["cpu_temp"], 78.0)
+        self.assertIsNone(s["ram_temp"])
+
+    def test_cpu_temp_without_a_package_label_is_the_hottest_input(self):
+        self.chip(0, "coretemp", {1: 61500, 2: 64250, 3: 59000}, {1: "Core 0", 2: "Core 1", 3: "Core 2"})
+        self.assertEqual(self.sample()["cpu_temp"], 64.25)
+
+    def test_ram_temp_is_the_hottest_dimm(self):
+        for n, v in enumerate((41250, 44000, 43500, 39000)):
+            self.chip(n, "spd5118", {1: v})
+        s = self.sample()
+        self.assertEqual(s["ram_temp"], 44.0)
+        self.assertIsNone(s["cpu_temp"])
+
+    def test_missing_unreadable_or_garbage_sensors_are_none(self):
+        s = self.sample()
+        self.assertEqual((s["cpu_temp"], s["ram_temp"]), (None, None))
+        self.chip(0, "coretemp", {1: "hot\n"}, {1: "Package id 0"})
+        self.chip(1, "spd5118", {1: ""})
+        self.chip(2, "spd5118", {1: 40000})
+        (self.root / "hwmon2" / "temp1_input").unlink()
+        (self.root / "hwmon2" / "temp1_input").mkdir()
+        s = self.sample()
+        self.assertEqual((s["cpu_temp"], s["ram_temp"]), (None, None))
+        self.assertEqual(set(s), {"gpus", "cpu", "ram_used", "ram_total", "swap_used", "swap_total",
+                                  "cpu_temp", "ram_temp", "disk_read_mb"})
+
+    def test_a_missing_root_is_none(self):
+        self.root = self.root / "absent"
+        s = self.sample()
+        self.assertEqual((s["cpu_temp"], s["ram_temp"]), (None, None))
+
+    def test_a_sensor_failing_later_does_not_drop_the_figure_for_good(self):
+        d = self.chip(0, "coretemp", {1: 50000}, {1: "Package id 0"})
+        tel = Telemetry(gpu_indices=[], gpu_factory=FakeGpu, hwmon_root=str(self.root))
+        self.addCleanup(tel.stop)
+        (d / "temp1_input").write_text("garbage")
+        self.assertIsNone(tel.sample()["cpu_temp"])
+        (d / "temp1_input").write_text("52000")
+        self.assertEqual(tel.sample()["cpu_temp"], 52.0)
 
 
 class EngineStderr(unittest.TestCase):
