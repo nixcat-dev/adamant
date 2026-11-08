@@ -7,7 +7,7 @@ Settings: [configuration](configuration/index.md). Diagnostic flags: `bin/basalt
 ## Start-up
 
 The page is up at once and the model loads behind it. The header reads `Loading` with the percent over a progress bar while weights load; choosing a model in the picker loads it. `/health` and `/metrics`
-show the load. A failed start-up load ends the server. Requests wait during a load and get a 503 if it fails.
+show the load. A failed start-up load ends the server. Requests wait during a load and get a 503 if it fails. The engine finds its install root from the executable's own location, so `data/` must sit beside `bin/` (or pass `--expert-profile`).
 
 ## Concurrent requests: `--parallel N`
 
