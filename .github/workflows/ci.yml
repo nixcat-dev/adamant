@@ -132,6 +132,20 @@ jobs:
           export TEMP="$PWD/build/tmp" TMP="$PWD/build/tmp" TMPDIR="$PWD/build/tmp"
           ctest --test-dir build -L cpu -LE avx512 -j 4 --output-on-failure --timeout 300
 
+      - name: Failed tests
+        if: failure()
+        run: |
+          python - <<'PY'
+          import re
+          log = open("build/Testing/Temporary/LastTest.log", errors="replace").read()
+          for block in re.split(r"\n(?=\d+/\d+ Test: )", log):
+              if "Test Failed." not in block and "Test Timeout" not in block:
+                  continue
+              name = block.split("\n", 1)[0]
+              tail = "\n".join(block.splitlines()[-30:])[:3000]
+              print("::error title=" + name.replace(",", " ").replace(":", " ") + "::" + tail.replace("%", "%25").replace("\r", "").replace("\n", "%0A"))
+          PY
+
       - name: Upload test logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
