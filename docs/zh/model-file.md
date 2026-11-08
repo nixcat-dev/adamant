@@ -13,7 +13,8 @@ drafter、8-bit 超连接副本、vision projector，以及带默认采样的 GG
 - **section：** `meta`（JSON：源 GGUF 的元数据及其 `general.sampling.*` 默认值、每个 tensor 的类型、形状与偏移、
   来源与许可证）、`tokenizer/*`、`dense` 与 `dense.index`、`experts` 与 `experts.layout`（路由专家，按层排布）、
   `gguf`（所有非专家的源 tensor）、`mtp/*`（drafter）、`hc8`（decode 所读的超连接矩阵的 int8 副本，由转换器算好，
-  启动时直接照原样读取）以及 `vision/*`。权威描述见
+  启动时直接照原样读取）以及 `vision/*`（只在用 `--mmproj` 构建时才有；引擎与 `basalt-vision --model FILE.basalt`
+  都就地读取它）。权威描述见
   [include/basalt/core/model_format.hpp](../../include/basalt/core/model_format.hpp)。
 - **版本：** engine 只读版本 2，其他一律拒绝。版本 1 的文件用
   [tools/migrations/basalt_v1_to_v2.py](../../tools/migrations/README.md) 就地变成版本 2，无需重新下载。改了什么：

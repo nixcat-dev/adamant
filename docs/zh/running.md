@@ -37,7 +37,8 @@
 - `hit`：专家缓存命中率。`pcie`：路由专家中经 PCIe 读取的比例。
 
 引擎自己的 `basalt ...` 行写入 `~/.cache/basalt/<id>/engine.log`，每个模型文件一个目录（`<id>` 是从文件中取出的 16 位
-十六进制数）；引擎启动失败时 `[server] engine log: PATH` 会指出它。
+十六进制数）；引擎启动失败时 `[server] engine log: PATH` 会指出它。该目录也存放会话缓存。不会从模型文件解包任何
+内容：服务器从文件 section 读取分词器，引擎与 `basalt-vision` 就地读取其中的 vision projector。
 
 ## 统计页面
 
@@ -73,7 +74,9 @@ Basalt 会拒绝让机器没有内存可用的设置，并且绝不会缩小你�
 ## 视觉：`--vision`
 
 `--vision off | dynamic | cpu | <GPU 编号>`（配置：`server` 中的 `"vision"`）。编码器是 Basalt 自己的，所有模式给出的嵌入
-逐位相同。
+逐位相同。所有模式都就地读取模型文件 `vision/mmproj` section 中的 projector。文本仍可能因模式而不同：sidecar 的 VRAM
+开销会缩小专家缓存，而哪些专家在 GPU 或 CPU 上运行会改变 logits 的最后几位，所以贪心答案可能在某些 token 后分叉
+（`dynamic` 以不同的缓存大小也是如此）。
 
 | 模式 | 编码器运行在 | VRAM 开销 |
 | --- | --- | --- |

@@ -43,74 +43,53 @@ void Prefill::set_stage(int64_t layer_begin, int64_t layer_end, Prefill* next) {
     }
 }
 
-// The peer's prompt share for chunks of up to `T_max` tokens (set_peer).  The peer card's prompt buffers for chunks of
-// up to `Tp` tokens, each from `take(bytes)`, in one place so that the tier's reserve and the allocation count the same
-// bytes.
-template <class Take>
-static void peer_layout(PeerPrefill& pp, int64_t Tp, const MmqPlan& mp, Take&& take) {
-    pp.mixed = (float*) take((size_t) Tp * N * 4);
-    pp.cap_rows = Tp * K;         // no row cap: only the row tables grow with it
-    pp.G = pp.T_max;              // one expert never has more rows than the chunk has tokens
-    const int64_t Gr = pp.G;
-    pp.Xq_g = take(mmq::q8_bytes(Gr, N));
-    pp.Hq_g = take(mmq::q8_bytes(Gr, 640));
-    pp.GU_g = (float*) take((size_t) Gr * 1280 * 4);
-    pp.H_g = (float*) take((size_t) Gr * 640 * 4);
-    pp.Dm_b[0] = (float*) take((size_t) Gr * N * 4);
-    pp.Dm_b[1] = (float*) take((size_t) Gr * N * 4);
-    const int64_t Rt = pp.cap_rows;
-    pp.src = (int32_t*) take((size_t) Rt * 4);
-    pp.ident = (int32_t*) take((size_t) Rt * 4);
-    pp.bounds = (int32_t*) take((size_t) (2 * (NE + NE / MMQ_GROUP + 2)) * 4);
-    pp.grp_gu = (uint8_t*) take(MMQ_GROUP * mp.gu_max + MMQ_TAIL);
-    pp.grp_d = (uint8_t*) take(MMQ_GROUP * mp.d_max + MMQ_TAIL + MMQ_SCALES);
+// The peer card's prompt buffers for chunks of up to `Tp` tokens in groups of `G` rows: the shared transport's
+// dimensions, in one place so that the tier's reserve and the allocation count the same bytes.
+static PeerShare::Dims share_dims(int64_t Tp, int64_t G, const MmqPlan& mp) {
+    PeerShare::Dims d;
+    d.n_embd = N;
+    d.n_ff = 640;
+    d.group_bytes = peer_down_at(mp) + MMQ_GROUP * mp.d_max + MMQ_TAIL + MMQ_SCALES;
+    d.act_bytes = mmq::q8_bytes(Tp, N);
+    d.max_tokens = (int) Tp;
+    d.max_rows = Tp * K;   // no row cap: only the row tables grow with it
+    d.n_expert = (int) NE;
+    d.launch_experts = MMQ_GROUP;
+    d.launch_rows = G;
+    // one group buffer, as many as its own gathers had: the group's gather follows the last group's products
+    d.stage_bufs = 1;
+    d.bufs = 2;
+    return d;
 }
-
-static bool make_peer(core::PeerExperts* peer, int64_t T_max, int64_t cap_rows,
-                      std::unique_ptr<PeerPrefill>& out, std::string& err) {
+static bool make_peer(core::PeerExperts* peer, int64_t T_max, std::unique_ptr<PeerPrefill>& out,
+                      std::string& err) {
     auto pp = std::make_unique<PeerPrefill>();
     pp->peer = peer;
     pp->T_max = std::min<int64_t>(T_max, stream_all_min() - 1);
+    pp->G = pp->T_max;   // one expert never has more rows than the chunk has tokens
     const int64_t Tp = pp->T_max;   // the longest chunk the peer takes
-    pp->cap_rows = std::max<int64_t>(1, std::min<int64_t>(cap_rows, Tp * K));
-    const MmqPlan& mp = mmq_plan();
-    cudaGetDevice(&pp->prim);
-    if (cudaEventCreateWithFlags(&pp->ev_in, cudaEventDisableTiming) != cudaSuccess) { err = "prefill peer: event"; return false; }
-    bool ok = true;
+    pp->cap_rows = Tp * K;
+    int prim = 0;
+    cudaGetDevice(&prim);
     pp->dev = peer->device();
-    cudaSetDevice(pp->dev);
-    ok = cudaStreamCreateWithFlags(&pp->s, cudaStreamNonBlocking) == cudaSuccess &&
-         cudaEventCreateWithFlags(&pp->ev_done, cudaEventDisableTiming) == cudaSuccess;
-    if (ok) {
-        ok = cudaStreamCreateWithFlags(&pp->s_out, cudaStreamNonBlocking) == cudaSuccess;
-        for (int i = 0; ok && i < PeerPrefill::kGrpEv; ++i)
-            ok = cudaEventCreateWithFlags(&pp->ev_grp[i], cudaEventDisableTiming) == cudaSuccess;
-    }
-    auto take = [&](size_t bytes) -> void* {
-        void* p = nullptr;
-        if (!ok || cudaMalloc(&p, bytes) != cudaSuccess) { ok = false; return nullptr; }
-        pp->owned.push_back(p);
-        return p;
-    };
-    peer_layout(*pp, Tp, mp, take);
-    for (int b = 0; b < 2 && ok; ++b) ok = cudaEventCreateWithFlags(&pp->ev_dm[b], cudaEventDisableTiming) == cudaSuccess;
-    if (ok) {
-        pp->ctx = std::make_unique<mmq::Context>();
-        pp->run_ctx = pp->ctx.get();
-        mmq::iota(pp->ident, pp->cap_rows, pp->s);
-        ok = cudaStreamSynchronize(pp->s) == cudaSuccess;
-    }
+    bool ok = true;
     size_t fb = 0, tb = 0;
-    cudaMemGetInfo(&fb, &tb);
-    cudaSetDevice(pp->prim);
+    if (ok) {
+        pp->share = std::make_unique<PeerShare>();
+        std::string e2;
+        ok = pp->share->open(prim, pp->dev, share_dims(Tp, pp->G, mmq_plan()), e2);
+    }
+    {
+        const core::OnDevice od(pp->dev);
+        cudaMemGetInfo(&fb, &tb);
+    }
     if (!ok) {
         cudaGetLastError();
-        err = "prefill peer: the peer's buffers do not fit (raise --peer-reserve-mib or lower --peer-prefill-rows)";
+        err = "prefill peer: the peer's buffers do not fit (raise --peer-reserve-mib or use --no-peer-prefill)";
         return false;
     }
-    basalt::log::info("basalt prefill", "peer GPU %d computes its experts' rows of each prompt chunk up to %lld "
-                         "tokens, with compact group buffers; %zu MiB left free on it", pp->dev,
-                 (long long) Tp, fb >> 20);
+    basalt::log::info("basalt prefill", "peer GPU %d computes its experts' rows of each prompt chunk up to %lld tokens, "
+                         "with compact group buffers; %zu MiB left free on it", pp->dev, (long long) Tp, fb >> 20);
     out = std::move(pp);
     return true;
 }
@@ -119,20 +98,20 @@ uint64_t Prefill::peer_bytes(int64_t chunk, bool streamed_share) {
     if (!mmq_plan().any) return 0;
     PeerPrefill pp;
     pp.T_max = std::min<int64_t>(chunk, streamed_share ? stream_all_min() - 1 : kPeerSlowRows);
-    uint64_t sum = 0;
-    peer_layout(pp, pp.T_max, mmq_plan(), [&](size_t bytes) -> void* { sum += (bytes + 255) & ~size_t(255); return nullptr; });
-    return sum;
+    pp.G = pp.T_max;
+    return PeerShare::peer_bytes(share_dims(pp.T_max, pp.G, mmq_plan()));
 }
 
-bool Prefill::set_peer(core::PeerExperts* peer, int64_t cap_rows, bool streamed_share, std::string& err) {
+bool Prefill::set_peer(core::PeerExperts* peer, bool streamed_share, std::string& err) {
     Impl& m = *impl_;
     if (peer == nullptr || !peer->valid()) { m.pp.reset(); return true; }
     // The peer takes the rows of the routed-only chunks (below stream_all_min()): the activations and
-    // result rows cross through host staging (cudaMemcpyPeerAsync) and the streamed ring stays off.
+    // result rows cross through the share's host staging and the streamed ring stays off.
     if (!mmq_plan().any) { err = "prefill peer: needs the MMQ prompt path"; return false; }
     std::unique_ptr<PeerPrefill> pp;
     const int64_t t_routed = streamed_share ? m.T_max : std::min<int64_t>(m.T_max, kPeerSlowRows);
-    if (!make_peer(peer, t_routed, cap_rows, pp, err)) return false;
+    bool ok = make_peer(peer, t_routed, pp, err);
+    if (!ok) return false;
     m.pp = std::move(pp);
     return true;
 }

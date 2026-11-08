@@ -26,15 +26,35 @@ measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages besid
 | Shared expert gate/up MMVQ pair | One launch handles two same-format Q8_0 or Q6_K projections over the same Q8_1 inputs; each output uses the existing exact-layout MMVQ row and reduction code | CPU reference and focused GPU parity pass; final-binary deployed-pack greedy check passed 900 tokens across 3 requests. Pair eligibility is restricted to 2–8 columns, exact multi-column mode, and a shared stream; other calls keep the prior launches. One matched development A/B at 450 W used the deployed IQ4_XS pack, profile `c31d790a…`, 7,461 resident slots, CPU share 0.60, PCIe share 0.55, context 262144, int8 KV, spec 4, chunk 32768, seed 1: 4096-token prefill 2777.34→2775.68 ms; decode conversion 152.396→153.537 ms, struct 232.277→234.923 ms, prose 152.182→152.530 ms; struct verify window 17.197→17.003 ms and verify 14.096→13.905 ms (58.15→58.81 tokens/s). This is one development pair with mixed small changes; it does not establish a general speedup. Full-model memcheck is incomplete. BF16 quality comparison is pending because a usable BF16 reference run was unavailable. |
 | Decode CPU/PCIe miss split (`ADAMANT_PCIE_BALANCE=1`) | The per-layer fit changes the fixed 1.85 factor to a linear pool-rate factor from 1.85 at 30 GB/s to 0.8 at 12 GB/s; the rounded PCIe share cap rises from 0.60 to 0.95 | Scheduling changes which expert misses run on CPU versus GPU. Expert arithmetic is unchanged, but accumulation order and output numerics may change. BF16 quality validation and Ada performance measurements are pending; no quality or speed claim is made. |
 
+### 0.3.1 paths
+
+- **Mixed gate/up layers** (`experts.layout` v7: UD-IQ1_S layer 18 is IQ2_S gate with IQ2_XXS up). Each half is decoded in its
+  own format by the same row code; the decode glue and the persistent peer kernel have mixed builds, the MMQ prompt slot is
+  padded to whole blocks of both types, and the CPU tier runs each half through its type's row kernel. Intended bitwise-equal
+  to the uniform kernels; `mixed_gu_parity` passes bitwise on sm_89.
+- **Peer prompt share** (`prefill::PeerShare`). The second card computes its experts' prompt rows from staged group buffers
+  with the same MMQ formats and the same q8_1 activations the main card writes, then returns the rows. Intended bitwise-equal
+  to the main card's rows; upstream's `peer_share_parity` checks the gathered bytes. `peer_share_parity` and
+  `peer_experts_parity` need two GPUs and skip on one; not measured on Ada. The FP4 streamed-chunk fallback is not
+  carried, so chunks at or above `stream_all_min()` stay on the primary.
+- **Glue-path formats** (Q5_K/Q6_K gate/up rows, IQ4_XS gate/up rows, (IQ3_S|IQ4_XS)/Q8_0 pairs). Same row dots and
+  accumulation order, fused launches only; `dec_moe_parity --kq` and `native_grouped_parity --glue` pass bitwise on sm_89.
+- **Batch K/V streaming** (`kv_stream`'s segment resolve, `--kv-resident` with `--batch`). Same rows through a segment
+  cursor; `kv_stream_parity` passes on sm_89.
+
+On the deployed IQ4_XS pack, 64 greedy tokens (prose ids, int8 KV, expert cache 700, swaps 0, one RTX 4090 at 450 W) are
+identical between the pre-merge build and this one. The BF16 quality gate was not rerun: no BF16 reference file is
+available on this machine.
+
 ## Prompt memory and peer execution
 
 Integer MMQ sizes intermediate buffers for all routed rows. Large NVFP4 prompt
 chunks can therefore require substantially more scratch memory than the native
 FP4 implementation; automatic fitting may select a smaller chunk. Validate actual
 allocation sizes and long prompts rather than extrapolating from short fixtures.
-Streamed expert chunks execute on the primary GPU; peer computation remains for
-routed-only chunks. Both peer-exclusive streaming and ordinary peer placement
-require separate coverage on a second card.
+Only routed-only prompt chunks are shared with the peer; chunks at or above
+`stream_all_min()` stay on the primary. Both peer-exclusive streaming and ordinary
+peer placement require separate coverage on a second card.
 
 Prompt splitting retains its existing NVFP4 pack-eligibility check using weight
 metadata, independently of the removed execution API. Its inherited cost model

@@ -35,8 +35,8 @@ Each entry is checked before anything loads, by the engine's own rules:
 | Value the model refuses (`max-context` past its maximum) | stops the start | stops the start |
 | Unknown name | stops the start | stops the start |
 
-`kv` in an entry for a model that has no KV choice stops the start. Two aliases that are the same, or two entries sharing a
-cache directory, stop the start too.
+`kv` takes the model's own values (`fp16`, `int8`, `q4_0`, `k8v4`); another value stops the start. Two aliases that are the same, or
+two entries sharing a cache directory, stop the start too.
 
 ## Requests and turns
 

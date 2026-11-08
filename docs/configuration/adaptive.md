@@ -24,4 +24,4 @@ bit-identical run to run.
 
 `hit=` in the `done` line counts only the main card's VRAM lookups, so a higher `hit` is not always faster. Compare `tg`.
 
-[basalt-probe](../probe.md) tries these values on your machine.
+Smaller rounds can win where the card is small, since each round moves fewer experts over the link. [basalt-probe](../probe.md) tries these values on your machine, small rounds included.

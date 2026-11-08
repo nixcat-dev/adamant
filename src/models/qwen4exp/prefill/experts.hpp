@@ -93,7 +93,8 @@ struct Prefill::Run::Chunk::Experts {
     const bool use_mmq = mmq_plan().any && mmq_plan().layer[(size_t) l];
     const int mmq_gt = lay.native ? lay.fmt[(size_t) l].gu_type : 42;
     const int mmq_dt = lay.native ? lay.fmt[(size_t) l].d_type : 42;
-    const bool fused_nat = use_mmq && stream_all && lay.native && fused::native_supported(mmq_gt, mmq_dt);
+    const int mmq_ut = lay.native ? lay.fmt[(size_t) l].up_type : 42;   // the up rows' type
+    const bool fused_nat = use_mmq && stream_all && lay.native && fused::native_supported(mmq_gt, mmq_dt, mmq_ut);
     const bool fused_l = (use_mmq && stream_all && !lay.native && fused::enabled()) || fused_nat;
     bool peer_now = false;                // multi-GPU: the peer computed rows of this layer (MMQ path only)
     // CPU share: this layer's CPU experts (rows [T * K - rows_cpu, T * K) of Dm) run on a thread that
@@ -182,6 +183,7 @@ struct Prefill::Run::Chunk::Experts::Group {
     decltype(Experts::use_mmq)& use_mmq = experts.use_mmq;
     decltype(Experts::mmq_gt)& mmq_gt = experts.mmq_gt;
     decltype(Experts::mmq_dt)& mmq_dt = experts.mmq_dt;
+    decltype(Experts::mmq_ut)& mmq_ut = experts.mmq_ut;
     decltype(Experts::fused_nat)& fused_nat = experts.fused_nat;
     decltype(Experts::fused_l)& fused_l = experts.fused_l;
     decltype(Experts::peer_now)& peer_now = experts.peer_now;
@@ -202,14 +204,20 @@ struct Prefill::Run::Chunk::Experts::Group {
     std::vector<char> on_peer;
     int64_t rows_local = T * K, rows_peer = 0;
     std::vector<int32_t> order, order_peer;
-    const size_t mmq_gub = use_mmq ? mmq::matrix_bytes(mmq_gt, 1280, N) : 0;
+    // a gate/up slot (gate rows, then up rows) and the gate's bytes in it; mmq_gub - mmq_gb or less are the up's
+    const size_t mmq_gub = use_mmq ? mmq::gu_slot_bytes(mmq_gt, mmq_ut, 640, N) : 0;
+    const size_t mmq_gb = use_mmq ? mmq::matrix_bytes(mmq_gt, 640, N) : 0, mmq_ub = use_mmq ? mmq::matrix_bytes(mmq_ut, 640, N) : 0;
     const size_t mmq_db = use_mmq ? mmq::matrix_bytes(mmq_dt, N, 640) : 0;
     int stage_next = 0;
     std::vector<int> stage_of, job_of;
     Chunk::StagerDone stager_done{nullptr};
-    // An MMQ group is gathered in one launch after its last streamed copy. Its slots share one
-    // completion event. A skipped ring entry first flushes any open group.
-    const bool group_gather = use_mmq && lay.native && MMQ_GROUP <= mmq::kGatherGroupMax;
+    // In the streamed walk an MMQ group is gathered in ONE launch, after ONE wait on its last
+    // streamed copy (the copy stream is in order), and its ring slots are released by ONE event.  A
+    // wait and a record per expert would put a GPU bubble each on the compute stream.  The same bytes into the same group slots.  A ring
+    // entry the routing skipped inside an open group first gathers what the group holds so far
+    // (`flush`), so no more than a group's entries are ever held back from the issuer.
+    const bool group_gather = stream_all && use_mmq && lay.native &&
+                              MMQ_GROUP <= mmq::kGatherGroupMax;
     mmq::GatherGroup gg;
     int gg_slots[MMQ_GROUP];
     int gg_nslots = 0;   // ring slots gathered by the next flush

@@ -6,7 +6,7 @@ switch. Several entries can share one address ([router](../configuration/models.
 | | Qwen3.8-Flash-Next |
 | --- | --- |
 | Architecture id | `qwen4exp` |
-| Packs | 9 packs, default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Packs | 11 packs, default `Qwen3.8-FN-NVFP4-DQ6_K`, [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
 | Layers, experts | 48 (36 GDN, 12 QSA); 512 per layer, top-10 |
 | Context | default 8,192; `--max-context` sets it |
 | Drafting | MTP drafter in the pack, on; `--spec` default 8 |
@@ -16,7 +16,7 @@ switch. Several entries can share one address ([router](../configuration/models.
 | `--kv` | fp16 (default), int8, q4_0, k8v4 |
 | Cards | main card plus up to three expert-tier cards |
 | Layer split | yes, matched cards, priced at start |
-| Parallel slots | yes |
+| Parallel slots | yes; each slot drafts |
 | Lossy flags | `--relaxed-drafting`, `--route-prior`, `--route-tail-skip` (off) |
 | Idle sleep, wake | yes (Linux) |
 | `basalt-bench --quality` | yes |

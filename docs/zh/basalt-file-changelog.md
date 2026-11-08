@@ -16,6 +16,9 @@
   启动时直接读取它们，省去读取 BF16 矩阵再量化的步骤（约半秒）。
 - **移除 `profile`：** 专家 profile 决定哪些专家初始驻留 VRAM。它是可以独立于权重改进的放置策略，
   因此移到了引擎里（`data/profiles`），更好的 profile 不再需要新文件。
+- **`experts.layout` v7，版本号不变：** 某一层的 gate 与 up 行类型不同（Unsloth 的 UD-IQ1_S：其中一层 gate 是 IQ2_S、
+  up 是 IQ2_XXS）时，会在 `# experts v7` 头部下把 up 的类型作为第六列给出。转换器只为这样的模型写 v7；其他 pack
+  仍是 v5（GGUF）或 v6（NVFP4）。早于 v7 的引擎会拒绝 v7 pack 并要求更新。
 - **精简 `meta`：** 不再有 `sampling`（服务器读取 GGUF 元数据的 `general.sampling.*` 键）、不再有 `profile` 或
   `hc8` 记录，也没有转换器版本号——每次替换某个 section 时这些溯源信息都会变化。
 

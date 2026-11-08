@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.hpp"
+#include "layout.hpp"
 #include "basalt/models/qwen4exp/prefill/prefill.hpp"
 #include "basalt/models/qwen4exp/decode/mtp.hpp"
 #include "basalt/core/on_device.hpp"
@@ -11,6 +12,7 @@
 #include "basalt/models/qwen4exp/prefill/gemm.hpp"
 #include "basalt/prefill/moe_mmq.hpp"
 #include "basalt/core/peer_experts.hpp"
+#include "basalt/prefill/peer_share.hpp"
 #include "basalt/log.hpp"
 #include <algorithm>
 #include <cmath>
@@ -22,57 +24,29 @@
 namespace basalt::prefill {
 using namespace detail;
 
-// multi-GPU: the peer GPU's share of a prompt chunk's experts.  Per MoE layer the primary copies its normed
-// activations through host memory, the peer quantizes the rows routed to the experts it holds, runs the same MMQ products the
-// primary would (gathered from its own slots), and copies the result rows back into the primary's Dm rows - the rows
-// are laid out local-first, so the peer's are one contiguous block at the end.
+// multi-GPU: the peer GPU's share of a prompt chunk's experts, on the shared transport (prefill::PeerShare).  Per MoE
+// layer the peer computes the rows routed to the experts it holds, with the products the primary would run on them (MMQ
+// from its own slots gathered into group buffers), and the rows land in the primary's Dm - the rows are laid out
+// local-first, so the peer's are one contiguous block at the end.
 struct PeerPrefill {
     core::PeerExperts* peer = nullptr;
     int dev = -1;
     int64_t cap_rows = 0, T_max = 0;
-    cudaStream_t s = nullptr;
-    cudaEvent_t ev_in = nullptr;    // on the primary: the activations and the row tables are ready
-    cudaEvent_t ev_done = nullptr;  // on the peer: its rows have landed in the primary's Dm
-    // multi-GPU: the result rows go back group by group on a second stream while the next group computes
-    cudaStream_t s_out = nullptr;
-    static constexpr int kGrpEv = NE / 16 + 2;
-    cudaEvent_t ev_grp[kGrpEv] = {};
-    bool out_pending = false;       // s_out may still read Dm (the next layer's products wait for it)
-    // the peer's per-row buffers hold one GROUP's rows (a group = up to 16 experts and at most G rows), the result
-    // rows double-buffered, and there is no row cap (every peer-held expert's rows go to the peer)
+    // a group = up to MMQ_GROUP experts and at most G rows, one launch
     int64_t G = 0;
-    void *Xq_g = nullptr, *Hq_g = nullptr;
-    float *GU_g = nullptr, *H_g = nullptr, *Dm_b[2] = {};
-    cudaEvent_t ev_dm[2] = {};
-    bool dm_live[2] = {};
-    std::vector<std::pair<size_t, size_t>> groups;
-    float* mixed = nullptr;
-    int32_t *src = nullptr, *bounds = nullptr, *ident = nullptr;
-    uint8_t *grp_gu = nullptr, *grp_d = nullptr;
-    std::unique_ptr<mmq::Context> ctx;
-    mmq::Context* run_ctx = nullptr;      // the context its products run in: ctx, or a layer split helper stage's
-    std::vector<int32_t> bounds_host;
+    std::unique_ptr<PeerShare> share;
     std::vector<void*> owned;
-    int prim = -1;                        // the primary's device
     ~PeerPrefill() {
+        share.reset();
         if (dev < 0) return;
-        int prev = 0;
-        cudaGetDevice(&prev);
-        cudaSetDevice(dev);
-        if (s) cudaStreamSynchronize(s);
-        ctx.reset();
+        const core::OnDevice od(dev);
         for (void* p : owned) cudaFree(p);
-        if (ev_done) cudaEventDestroy(ev_done);
-        if (s_out) cudaStreamSynchronize(s_out);
-        for (cudaEvent_t e : ev_grp) if (e) cudaEventDestroy(e);
-        for (cudaEvent_t e : ev_dm) if (e) cudaEventDestroy(e);
-        if (s_out) cudaStreamDestroy(s_out);
-        if (s) cudaStreamDestroy(s);
-        cudaSetDevice(prim >= 0 ? prim : prev);
-        if (ev_in) cudaEventDestroy(ev_in);
-        cudaSetDevice(prev);
     }
 };
+
+// A peer group buffer: gate/up of up to MMQ_GROUP experts and a zeroed tail, then from this offset their down matrices,
+// a zeroed tail and the NVFP4 scale tails (grp_scales).
+inline size_t peer_down_at(const MmqPlan& mp) { return al256(MMQ_GROUP * mp.gu_max + MMQ_TAIL); }
 
 // Copies a blob from the peer card's memory to the primary through pinned host buffers with only asynchronous calls:
 // the peer's device-to-host copies run ahead of the primary's host-to-device ones, and no host thread blocks in a

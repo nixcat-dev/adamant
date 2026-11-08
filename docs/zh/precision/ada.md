@@ -25,12 +25,29 @@ Adamant 的 Ada 实现尚处于开发早期。Linux sm_89 Release 构建已在 C
 | 共享专家 gate/up MMVQ 成对启动 | 一次启动用相同的 Q8_1 输入处理两个同格式的 Q8_0 或 Q6_K 投影；每个输出使用现有精确布局的 MMVQ 行与归约代码 | CPU 参考与定向 GPU 一致性测试通过；最终二进制的部署包贪心检查在 3 个请求中共 900 token 通过。成对资格限制在 2–8 列、精确多列模式与共享 stream；其余调用仍走原启动方式。一次匹配的 450 W 开发 A/B 使用部署的 IQ4_XS pack，profile `c31d790a…`，7,461 个常驻槽位，CPU share 0.60，PCIe share 0.55，上下文 262144，int8 KV，spec 4，chunk 32768，seed 1：4096-token prefill 2777.34→2775.68 ms；decode 换算 152.396→153.537 ms，struct 232.277→234.923 ms，prose 152.182→152.530 ms；struct 验证窗口 17.197→17.003 ms，verify 14.096→13.905 ms（58.15→58.81 tokens/s）。这是一次包含若干小幅改动的开发配对；不能据此得出普遍加速。全模型 memcheck 未完成。因没有可用的 BF16 参考运行，BF16 质量对比尚未进行。 |
 | decode 的 CPU/PCIe 未命中划分（`ADAMANT_PCIE_BALANCE=1`） | 每层拟合把固定系数 1.85 改为线性池速率系数：从 30 GB/s 时的 1.85 到 12 GB/s 时的 0.8；取整后的 PCIe 份额上限从 0.60 提高到 0.95 | 调度改变哪些专家未命中在 CPU、哪些在 GPU 上运行。专家算术不变，但累加顺序与输出数值可能改变。BF16 质量验证与 Ada 性能测量尚未完成；不作质量或速度主张。 |
 
+### 0.3.1 路径
+
+- **混合 gate/up 层**（`experts.layout` v7：UD-IQ1_S 第 18 层是 IQ2_S gate 配 IQ2_XXS up）。每一半都由同一行代码按其
+  自身格式解码；decode glue 与持久化对等 kernel 有混合构建，MMQ prompt 槽位按两种类型的整块补齐，CPU 层让每一半走
+  其类型的行 kernel。设计为与统一 kernel 逐位一致；`mixed_gu_parity` 在 sm_89 上逐位通过。
+- **对等 prompt 共享**（`prefill::PeerShare`）。第二张卡用与主卡相同的 MMQ 格式和相同的 q8_1 激活，从暂存的分组
+  buffer 计算其专家的 prompt 行，再把行送回。设计为与主卡的行逐位一致；上游 `peer_share_parity` 检查 gather 的字节。
+  `peer_share_parity` 与 `peer_experts_parity` 需要两张 GPU，单卡上跳过；未在 Ada 上测量。不携带 FP4 流式 chunk 回退，
+  因此达到或超过 `stream_all_min()` 的 chunk 仍留在主卡。
+- **glue 路径格式**（Q5_K/Q6_K gate/up 行、IQ4_XS gate/up 行、(IQ3_S|IQ4_XS)/Q8_0 对）。行点积与累加顺序相同，只融合
+  启动；`dec_moe_parity --kq` 与 `native_grouped_parity --glue` 在 sm_89 上逐位通过。
+- **批量 K/V 流式**（`kv_stream` 的分段 resolve，`--kv-resident` 配 `--batch`）。相同的行经分段游标读取；
+  `kv_stream_parity` 在 sm_89 上通过。
+
+在部署的 IQ4_XS pack 上，64 个贪心 token（prose ids、int8 KV、expert cache 700、swaps 0、单张 450 W 的 RTX 4090）在
+合并前的构建与本构建之间逐位相同。BF16 质量门槛未重跑：本机上没有 BF16 参考文件。
+
 ## prompt 显存与对等执行
 
 整数 MMQ 会为所有路由行设置中间 buffer 的大小。因此，与原生 FP4 实现相比，大的 NVFP4
 prompt chunk 可能需要多得多的暂存内存；自动拟合可能因此选择更小的 chunk。请用真实分配尺寸
-和长 prompt 来验证，而不是从短样例外推。流式专家 chunk 在主 GPU 上执行；对等计算仍只保留
-给仅路由的 chunk。对等独占流式与常规对等放置都需要在第二张卡上分别覆盖。
+和长 prompt 来验证，而不是从短样例外推。只有仅路由的 prompt chunk 会与对等卡共享；达到或超过
+`stream_all_min()` 的 chunk 留在主卡上。对等独占流式与常规对等放置都需要在第二张卡上分别覆盖。
 
 prompt 切分保留了它基于权重元数据、独立于已移除的执行 API 的 NVFP4 pack 资格检查。其继承
 的成本模型与 chunk 阈值没有针对 Ada 上的整数 MMQ 标定过；切分的正确性与性能收益都尚未

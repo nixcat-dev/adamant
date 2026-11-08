@@ -8,7 +8,7 @@
 | | Qwen3.8-Flash-Next |
 | --- | --- |
 | 架构 id | `qwen4exp` |
-| Pack | 9 个 pack，默认 `Qwen3.8-FN-NVFP4-DQ6_K`，[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Pack | 11 个 pack，默认 `Qwen3.8-FN-NVFP4-DQ6_K`，[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
 | 层、专家 | 48 层（36 层 GDN，12 层 QSA）；每层 512 个专家，top-10 |
 | 上下文 | 默认 8,192；用 `--max-context` 设置 |
 | Drafting | pack 内的 MTP drafter，默认开启；`--spec` 默认 8 |
@@ -18,7 +18,7 @@
 | `--kv` | fp16（默认）、int8、q4_0、k8v4 |
 | 卡 | 主卡加最多三张专家层卡 |
 | 层拆分 | 支持，需要匹配的卡，启动时定价 |
-| 并行槽位 | 支持 |
+| 并行槽位 | 支持；每个槽位都会 drafting |
 | 有损标志 | `--relaxed-drafting`、`--route-prior`、`--route-tail-skip`（关闭） |
 | 空闲睡眠与唤醒 | 支持（Linux） |
 | `basalt-bench --quality` | 支持 |

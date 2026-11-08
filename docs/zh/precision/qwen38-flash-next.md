@@ -24,7 +24,7 @@ Flash-Next 在哪里舍入、每种舍入要付出多少代价。方法与参考
 
 | 阶段 | 格式 | 算术 |
 |---|---|---|
-| 路由专家（GGUF pack） | 逐字节的 GGUF block；跨层混合类型 | q8_1 激活，dp4a 或 int8 mma，fp32 缩放因子 |
+| 路由专家（GGUF pack） | 逐字节的 GGUF block；跨层混合类型，也可在一层内混合（UD-IQ1_S：IQ2_S gate、IQ2_XXS up） | q8_1 激活，dp4a 或 int8 mma，fp32 缩放因子 |
 | 路由专家（NVFP4） | NVIDIA 的 E2M1 码与 UE4M3 缩放因子，4.5 bit/权重；FP32 尾部 `{s_gate, s_up, s_down}` | q8_1 激活，每 16 值子块精确 int32，fp32 缩放因子；尾部在 fp32 中施加 |
 | 稠密投影（attention、GDN qkv/z/out、QSA） | Q8_0（NVFP4 pack 中是 Q6_K；其他 pack 中是 Q4_K/Q5_K/Q6_K） | q8_1 激活，int8 tensor-core 点积，每 32 块精确 int32 |
 | Router、GDN alpha/beta、indexer、PLE key/value | 按存储的 BF16 | fp32 激活与求和 |
@@ -103,6 +103,9 @@ chunk 尺寸下都走整数 MMQ（[Ada](ada.md)）。
 一次性关掉所有舍入（BF16 稠密、处处 fp32 激活、fp16 KV、精确数学）：PPL 3.2866 对默认的 3.2975，KLD 0.05308
 对 0.06213，top-1 92.55% 对 91.59%。去掉每一种舍入使 KLD 下降约 0.009（15%）。仅 Q8_0 稠密的 pack 就贡献了其中的
 -0.0059。Q8_0 稠密的 pack 在 prose 上约慢 7%，在 struct 上慢 3%。
+
+UD-IQ1_S，按发布原样转换（第 18 层：IQ2_S gate、IQ2_XXS up；每一半走各自格式的 kernel，位与统一层的行相同）：
+PPL 3.4049，KLD 0.2676，top-1 82.76%（100 个 chunk，T 3，int8 KV，专家常驻）。
 
 Q5_0 的几行：UD-Q3_K_XL 上 KLD 0.0943 对 0.0948，UD-Q2_K_XL 上 0.1520 对 0.1517，层级自动定容。device-planned
 尾部只有在每层的专家格式都在其中时才运行，所以在这两个 pack 上 decode 的舍入与 prompt 的一起移动。

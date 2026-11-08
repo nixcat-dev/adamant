@@ -60,6 +60,7 @@ struct MmqPlan {
 
 // A peer card slower than the main one takes the rows of routed-only chunks up to this size, no more.
 constexpr int64_t kPeerSlowRows = 2559;
+constexpr size_t al256(size_t v) { return (v + 255) & ~(size_t) 255; }
 
 const MmqPlan& mmq_plan();
 float* grp_scales(uint8_t* grp_d);

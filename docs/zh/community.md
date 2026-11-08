@@ -10,7 +10,7 @@
 2. `--submitter NAME` 是必填项：你想显示的名字（不含空格的一个名字，最多 40 个字符；不做核实）。`notes`（最多 200 个字符）是可选的，需手动添加。
 3. 检查 `docs/community/benchmarks.json` 中的这一行，提交它并开一个 pull request。如果 bench 无法写入文件，它会打印这一行并说明粘贴到哪里。
 
-这一行记录 `model`（`Qwen3.8-Flash-Next`，即模型的 adapter 为 pack 的架构报告的名字，而不是文件名）和 `kv`，即这次运行使用的 KV 缓存格式：预设会要求 `--kv int8`，模型没有这个选项时就用模型自己的格式。
+这一行记录 `model`（`Qwen3.8-Flash-Next`，即模型的 adapter 为 pack 的架构报告的名字，而不是文件名）和 `kv`，即这次运行使用的 KV 缓存格式：预设传入 `--kv int8`。
 
 你需要足够的空闲 RAM，保证没有任何专家从 SSD 读取；bench 会检查这一点，否则拒绝打印结果行。
 

@@ -1,5 +1,6 @@
 // src/models/qwen4exp/serve/batch.cpp - batch operations for the persistent engine.
 #include "basalt/models/qwen4exp/shared_names.hpp"
+#include "basalt/protocol.hpp"
 #include "qfn_state.hpp"
 
 namespace basalt::models::qwen4exp::serve {
@@ -295,16 +296,12 @@ bool QfnRuntime::batch_step() {
         const int b = rows[sg];
         BSlot& sl = bs[(size_t) b];
         const int k = n_keep[sg];
-        // one line per slot and window: every token it kept, written in one call so a line from the prompt
-        // reader's thread cannot land inside it
-        std::string bt = "BT " + std::to_string(b);
+        std::string bt = "BT " + std::to_string(b);   // one line per slot and window: every token it kept
         for (int e = 0; e < k; ++e) {
             sl.ids.push_back(tok[r0s[sg] + e]);    // the window fed it: the slot's sessions hold it now
-            bt += ' ';
-            bt += std::to_string((int) outb[r0s[sg] + e]);
+            bt += " " + std::to_string((int) outb[r0s[sg] + e]);
         }
-        bt += '\n';
-        std::fputs(bt.c_str(), stdout);
+        basalt::protocol::emit_text(bt + "\n");
         sl.produced += k;
         if (real) {   // the window's verdict on its drafts: the draft-length rule, the lookup history, the policy
             const int a = k - 1, Tw = lens[sg];
@@ -325,14 +322,9 @@ bool QfnRuntime::batch_step() {
         if (bdigest) {
             uint64_t part[10] = {};
             slot_digest(b, sl.p + k, part);
-            std::string dig = "BDIG " + std::to_string(b) + " " + std::to_string((long long) (sl.p + k));
-            for (int i = 0; i < 10; ++i) {
-                char hx[24];
-                std::snprintf(hx, sizeof hx, "%c%llx", i == 0 ? ' ' : ',', (unsigned long long) part[i]);
-                dig += hx;
-            }
-            dig += '\n';
-            std::fputs(dig.c_str(), stdout);
+            std::printf("BDIG %d %lld", b, (long long) (sl.p + k));
+            for (int i = 0; i < 10; ++i) std::printf("%c%llx", i == 0 ? ' ' : ',', (unsigned long long) part[i]);
+            std::printf("\n");
         }
         if (fin_of[sg] != nullptr) {
             const double ms = std::chrono::duration<double, std::milli>(Clock::now() - sl.t0).count();

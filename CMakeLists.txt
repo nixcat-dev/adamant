@@ -220,6 +220,11 @@ if(BUILD_TESTING)
   target_link_libraries(adapter_builtin_test PRIVATE models)
   basalt_embed_manifest(adapter_builtin_test)
   basalt_gpu_test(NAME adapter_builtin_test COMMAND adapter_builtin_test)
+  # the split of a layer's RAM experts between the cards (no GPU)
+  add_executable(peer_take_test tests/prefill/peer_take_test.cpp)
+  target_include_directories(peer_take_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  basalt_embed_manifest(peer_take_test)
+  basalt_cpu_test(NAME peer_take_test COMMAND peer_take_test)
   # shared code must not include a model; models must not include each other
   # a check of the tree's text, in bash and python3: Linux's run covers it for every platform
   if(NOT WIN32)
@@ -246,12 +251,12 @@ target_link_libraries(basalt-plan PRIVATE plan)
 
 # ---- core (GPU runtime) ---------------------------------------------
 add_library(core STATIC src/core/device.cu src/core/pinned.cu src/core/ram_load.cpp src/core/graph.cpp src/core/weights.cpp src/core/direct_upload.cpp
-                             src/core/model_file.cpp src/core/host_plan.cpp)
+                             src/core/host_plan.cpp)
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The selected runtime is PUBLIC because graph.cpp is a HOST translation unit that calls cudaGraphLaunch and
 # cudaEventQuery: the .cu sources get cudart through the CUDA language rules, a .cpp does not, and the
 # linker error ("unresolved external symbol cudaGraphInstantiate") names the function rather than the cause.
-target_link_libraries(core PUBLIC artifact platform warnings ${_gpu_runtime_target})
+target_link_libraries(core PUBLIC model_file artifact platform warnings ${_gpu_runtime_target})
 
 add_executable(basalt-device src/models/qwen4exp/plan/device_main.cpp)
 target_link_libraries(basalt-device PRIVATE core)
@@ -594,6 +599,15 @@ if(Python3_Interpreter_FOUND)
                   COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/program/community_row_fix_test.py
                           $<TARGET_FILE:community_row_test> ${CMAKE_CURRENT_SOURCE_DIR})
   set_tests_properties(community_row_fix_test PROPERTIES TIMEOUT 60)
+  # protocol lines written from several threads each arrive whole on stdout
+  add_executable(protocol_test tests/core/protocol_test.cpp)
+  target_include_directories(protocol_test PRIVATE include)
+  target_link_libraries(protocol_test PRIVATE warnings Threads::Threads)
+  basalt_embed_manifest(protocol_test)
+  basalt_cpu_test(NAME protocol_test
+                  COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/core/protocol_test.py
+                          $<TARGET_FILE:protocol_test>)
+  set_tests_properties(protocol_test PROPERTIES TIMEOUT 60)
 endif()
 
 # the C++ tokenizer's ids against tools/tokenizer.py over a corpus
@@ -735,13 +749,19 @@ basalt_gpu_test(NAME native_grouped_parity COMMAND native_grouped_parity)
 # dec_moe_glue (plan built inside, gate/up pair kernel, SwiGLU, down) bitwise vs native_expert_grouped, every covered pair
 basalt_gpu_test(NAME native_grouped_parity_glue COMMAND native_grouped_parity --glue)
 set_tests_properties(native_grouped_parity_glue PROPERTIES TIMEOUT 300)
+# a layer whose gate and up rows differ in type: the decode kernels per half bitwise vs the uniform ones, the persistent
+# kernel vs grouped, the CPU tier vs its row kernels, all against a double reference
+add_executable(mixed_gu_parity tests/models/qwen4exp/kernels/mixed_gu_parity.cpp)
+target_include_directories(mixed_gu_parity PRIVATE ${_gpu_include_directories})
+target_link_libraries(mixed_gu_parity PRIVATE model_qwen4exp_kernels kernels_cpu ${_gpu_runtime_target})
+basalt_gpu_test(NAME mixed_gu_parity COMMAND mixed_gu_parity)
+set_tests_properties(mixed_gu_parity PROPERTIES TIMEOUT 300)
 # Weighted native GR RMSNorm against the frozen kernel and a double-precision CPU reference.
 add_executable(native_gr_norm_parity tests/kernels/native_gr_norm_parity.cu)
 target_include_directories(native_gr_norm_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(native_gr_norm_parity PRIVATE model_qwen4exp_kernels ${_gpu_runtime_target})
 target_compile_options(native_gr_norm_parity PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>)
 basalt_gpu_test(NAME native_gr_norm_parity COMMAND native_gr_norm_parity)
-
 add_executable(shared_expert_parity tests/models/qwen4exp/kernels/shared_expert_parity.cpp)
 target_include_directories(shared_expert_parity PRIVATE ${_gpu_include_directories})
 target_link_libraries(shared_expert_parity PRIVATE model_qwen4exp_kernels ${_gpu_runtime_target})
@@ -1260,7 +1280,11 @@ if(MSVC)
   target_compile_options(mmq PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/bigobj>)
 endif()
 target_link_libraries(mmq PUBLIC ggml_quants ${_gpu_runtime_target})
-target_link_libraries(model_qwen4exp_prefill PUBLIC mmq)
+# multi-GPU: a second card's share of a prompt chunk's routed experts, on the MMQ products
+add_library(peer_share STATIC src/prefill/peer_share.cpp)
+target_include_directories(peer_share PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include PRIVATE ${_gpu_include_directories})
+target_link_libraries(peer_share PUBLIC mmq kernels ${_gpu_runtime_target})
+target_link_libraries(model_qwen4exp_prefill PUBLIC mmq peer_share)
 # the fused prompt experts: on the MMQ device code, with its flags
 add_library(model_qwen4exp_moe_fused STATIC src/models/qwen4exp/prefill/moe_fused.cu src/models/qwen4exp/prefill/moe_fused_iq.cu)
 target_include_directories(model_qwen4exp_moe_fused PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1283,6 +1307,11 @@ if(BUILD_TESTING)
   target_link_libraries(prefill_cpu_share_test PRIVATE mmq kernels_cpu ${_gpu_runtime_target})
   basalt_gpu_test(NAME prefill_cpu_share_test COMMAND prefill_cpu_share_test)
   set_tests_properties(prefill_cpu_share_test PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
+  # a second card's share of a chunk's experts against the main card's MMQ and a double-precision reference (two GPUs)
+  add_executable(peer_share_parity tests/prefill/peer_share_parity.cu)
+  target_link_libraries(peer_share_parity PRIVATE peer_share core ggml_quants ${_gpu_runtime_target})
+  basalt_gpu_test(NAME peer_share_parity COMMAND peer_share_parity)
+  set_tests_properties(peer_share_parity PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 600)
   # the prompt path's routed-entry histogram against a host count
   add_executable(prefill_route_count_test tests/models/qwen4exp/prefill/prefill_route_count_test.cpp)
   target_link_libraries(prefill_route_count_test PRIVATE model_qwen4exp_prefill ${_gpu_runtime_target})

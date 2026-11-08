@@ -39,7 +39,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 ## 自动设置
 
 未给出时，引擎自行选择 `peer-exclusive`、`resident`（`resident-budget-gib`）、`pool-affinity` 和 `pool-workers`。给出的值总是优先。
-它会打印一行 `[server] auto`：
+它会打印一行 `[server] auto`，其中的 `ram-experts` 就是 `resident` 的值（放在 RAM 里的专家，不是整个模型）：
 
 | 设置 | 规则 |
 | --- | --- |
@@ -89,8 +89,8 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
 | `max-context` | engine | token | 8192 | 最长上下文。由 `parallel` 个槽位共享。KV 缓存随它增长。 |
-| `kv` | engine | `fp16`、`int8`、`q4_0`、`k8v4` | `fp16` | 仅 Flash-Next。KV 存储。`int8` 让 VRAM 减半。`q4_0` 是旋转后的 4-bit；`k8v4` 让 K 用 int8、V 用 4-bit（每个 cell 816 字节，`int8` 是 1,056）。不与 `kv-resident` 同用。 |
-| `kv-resident` | engine | cell（至少 20,480）或 `0` | 0 | 仅 Flash-Next。在 VRAM 中保留 N 个 cell 的 KV，其余放在 pinned RAM。 |
+| `kv` | engine | `fp16`、`int8`、`q4_0`、`k8v4` | `fp16` | 仅 Flash-Next。KV 存储。`int8` 让 VRAM 减半。`q4_0` 是旋转后的 4-bit；`k8v4` 让 K 用 int8、V 用 4-bit（每个 cell 816 字节，`int8` 是 1,056）。不与 `kv-resident` 同用。其他取值会被拒绝。 |
+| `kv-resident` | engine | cell（至少 20,480）或 `0` | 0 | 仅 Flash-Next。在 VRAM 中保留 N 个 cell 的 KV，其余放在 pinned RAM。配合 `parallel` 且 `kv` 为 `int8` 时，每个槽位都这样流送自己的 K/V。 |
 | `rope-scaling` | engine | `none`、`linear`、`yarn` | 模型的，否则 `none` | 仅 Flash-Next。超出训练长度扩展上下文。运行期间固定。 |
 | `rope-scale` | engine | 数字 | 模型的，否则 1 | 仅 Flash-Next。`linear` 与 `yarn` 的倍数。 |
 | `rope-freq-base`、`rope-freq-scale` | engine | 数字 | 0（用模型自己的） | 仅 Flash-Next。原始 RoPE 值。除非了解含义，保持 0。 |
@@ -129,7 +129,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `prefill` | engine | `auto`、`auto:N`（N = 8192、16384 或 32768），或 token 数 | `auto` | 仅 Flash-Next。提示词块大小。 |
 | `prefill-cpu-share` | engine | 0 到 1 | 0.6 | 仅 Flash-Next。流式提示词专家中由 CPU 计算的比例。固定值，所以输出逐次运行一致。 |
 | `short-read` | engine | token | 64（`0` 关闭） | 仅 Flash-Next。至多 N 个 token 的新增部分走 decode 窗口读取。 |
-| `peer-prefill-rows` | engine | 每层行数 | 块 × top-k 的一半 | 仅 Flash-Next。对等卡计算的每层提示词行数。`0` 让提示词留在主卡。 |
+| `no-peer-prefill` | engine | 开关 | 关闭 | 仅 Flash-Next。对等卡不计算任何提示词行；提示词留在主卡。 |
 | `read-beside` | engine | 开关 | 关闭 | 配合 `batch`：短到可以独占 GPU 的提示词读取（16,384 token 以下）与解码槽位同时进行，而不是挡住它们，因此新提示词读取期间槽位仍持续出 token。没有槽位在解码时走独占路径，所以单流的行为与以前完全一致。与槽位并行时，该读取只出借有 RAM 副本的缓存槽位（有 RAM 副本时没有别的上限），并且因为与窗口共享 GPU 仍比独占读取慢；这样一次读取中的会话 checkpoint 仍会暂停窗口。 |
 | `read-decode-share` | engine | 数字 0..1 | 0.5 | 配合 `batch`：与槽位窗口交错进行的提示词块读取中，窗口在下一块之前获得该块时间的比例。`0` 表示把这样的读取整块跑完（窗口随后等待它）。 |
 | `read-live-chunk` | engine | 整数 token，256 的倍数 | 1024 | 配合 `batch`：槽位解码时提示词读取每次取的块，因此长提示词每次只挡住窗口一小块。受本次运行自身的块大小限制。 |
@@ -152,7 +152,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
-| `parallel` | 条目 | 1..8 | 1 | 同时服务 N 个请求。设置引擎的 `batch`。 |
+| `parallel` | 条目 | 1..8 | 1 | 同时服务 N 个请求。设置引擎的 `batch`。配合 `kv-resident` 时，每个槽位在 VRAM 中只保留那些 cell。 |
 | `slot-full-context` | 条目 | 开关 | 关闭 | 给每个槽位完整的 `max-context`，代价是 N 倍的 KV。 |
 
 ## 会话缓存

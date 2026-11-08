@@ -65,7 +65,7 @@ bin/basalt serve --config basalt_config.json
 
 开箱即用的 pack，每一款的质量都对照全精度（BF16 参考）测量过，发布在
 [Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) 上：
-`Qwen3.8-FN-NVFP4-DQ6_K`、`-NVFP4-DQ8`、`-UD-Q4_K_XL`、`-UD-Q5_K_XL`、`-UD-Q6_K_XL`、`-Q8_0`、`-GSQ-RCO-IQ3_S`、`-GSQ-RCO-IQ3_XXS` 和 `-GSQ-RCO-Q2_0`（每个都是 `.basalt`）。
+`Qwen3.8-FN-NVFP4-DQ6_K`、`-NVFP4-DQ8`、`-UD-IQ1_S`、`-UD-IQ1_M`、`-UD-IQ2_XS`、`-UD-IQ3_XXS`、`-UD-IQ4_XS`、`-UD-Q4_K_XL`、`-UD-Q5_K_XL`、`-UD-Q6_K_XL` 和 `-Q8_0`（每个都是 `.basalt`）。
 两个 NVFP4 pack 共用 NVIDIA 的 NVFP4 专家；`D` 表示 dense 投影的格式：DQ6_K 是默认值且更快，DQ8 在 prose 上约慢 7%，KLD 更低（[精度](docs/zh/precision/qwen38-flash-next.md)）。
 一个模型就是一个文件：权重、分词器、MTP drafter、8-bit hyper-connection 副本和 vision projector。专家 profile 随引擎一起发布（[data/profiles](data/profiles)）。
 

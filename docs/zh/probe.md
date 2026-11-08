@@ -42,7 +42,7 @@ flag 与取值，附一个简短的实测数字。细节写到 stderr。任何�
 - **`--adapt-every`、`--adapt-swaps`、`--adapt-decay`**：`PROBE adapt`（[running](running.md)）把专家层放回加载
   后的状态，并设定其中一项设置；然后贪心运行 `prose`（1200 token）与 `struct`（400 token）——一次冷启动与一次
   话题切换——以 token 除以 decode 时间打分。设置组合：engine 自己的（最先跑、最后再跑一次：两次之差就是噪声
-  带，至少 3%）、`64 / 256 / 0.7` 与 `1 / 160`。只有当某个组合超出噪声带地胜过两次 engine 设置的均值时才打印，
+  带，至少 3%）、`64 / 256 / 0.7`、`1 / 160` 以及一个小轮次（swaps 12，默认节奏）。只有当某个组合超出噪声带地胜过两次 engine 设置的均值时才打印，
   给出有差异的 flag 与 `(adapt test +N%)`。带 `--expert-profile-save FILE` 时，engine 自己的设置再多跑一次、从
   FILE 放置；当这样快得超出噪声带时建议 `--expert-profile-save FILE`，慢时建议 `no --expert-profile-save`。报告
   的 `adapt test` 行给出每个速率与噪声带。
