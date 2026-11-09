@@ -56,6 +56,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | --- | --- | --- | --- | --- |
 | `model` | 模型条目 | 路径 | 必填 | `.basalt` 文件：权重、分词器、chat 模板、drafter、vision projector 和默认采样。 |
 | `alias` | 模型条目 | 字符串 | 文件中的名字 | API 报告的模型名。 |
+| `chat-template` | 服务器 | 路径 | 无 | 用此 Jinja 文件渲染提示，代替模型自带的聊天模板。 |
 | `host` | server | 地址 | `127.0.0.1` | 监听地址。`0.0.0.0` 对外服务；绝不要不带 `api-key` 这样用。 |
 | `port` | server | 整数 | `8080` | TCP 端口。 |
 | `api-key` | 命令行 | 字符串 | 无 | 要求 `/v1/*` 带上这个 key（`Authorization: Bearer` 或 `x-api-key`）。仅命令行。 |

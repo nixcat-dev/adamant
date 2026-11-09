@@ -533,6 +533,8 @@ def build_parser() -> argparse.ArgumentParser:
                                   "card, the fastest as main (default: GPU 0 alone)")
     ap.add_argument("--tokenizer", default=str(ROOT / "pack/full/tokenizer"),
                     help="tokenizer directory for the mock engine (a byte tokenizer if absent)")
+    ap.add_argument("--chat-template", metavar="FILE",
+                    help="a .jinja file to render prompts with instead of the model's own chat template")
     ap.add_argument("--open", action="store_true", help="open the local page in the browser once the model is ready")
     ap.add_argument("--fit-max-tokens", action="store_true",
                     help="clamp max_tokens to the remaining context instead of rejecting the request with 400")

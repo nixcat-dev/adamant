@@ -236,6 +236,11 @@ def build_model(a, cfg: dict, logs, multi: bool, known) -> Service:
     dialect = dialect_for(cfg.get("arch"))
     template = files["chat_template.jinja"].decode("utf-8") if "chat_template.jinja" in files else \
         (ROOT / "serve/chat_template.jinja").read_text(encoding="utf-8")
+    if a.chat_template:
+        try:
+            template = Path(a.chat_template).read_text(encoding="utf-8")
+        except OSError as e:
+            fail(f"chat template unreadable: {a.chat_template}: {e}")
     svc = Service(engine, tok, dialect.template(template),
                   model_name=cfg.get("model_name", "basalt"), vision=vision,
                   sampling_defaults=sampling_defaults, fit_max_tokens=a.fit_max_tokens, grammar=a.grammar,
