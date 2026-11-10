@@ -17,6 +17,7 @@ using namespace verify_detail;
 // The device-planned tail's window start: residency tables, the flag words, and the peer card's persistent window.
 bool Verifier::dm_begin(std::string& err, DecodeGaps* gm) {
     if (!dm_sync(err)) return false;
+    if (!dm_stage_places(err)) return false;   // a swap since moved some RAM copies
     decode_events().stamp(4);
     if (gm) gm->mark(13);
     *(volatile uint32_t*) (dm_->h_w + 0) = 0;

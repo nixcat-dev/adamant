@@ -93,6 +93,7 @@ struct DecMoe {
     int64_t stage_stride = 0;
     int stage_blocks = 0;
     int stage_min = 0;   // the fewest distinct CPU misses a layer stages a share of
+    bool stage_solo = false;   // --exp solo_stage=1: a single request's windows stage too (any expert sizes)
     // pinned staging of the residency uploads: the copies take their source from here, so the call does
     // not wait for the stream; a ring of slots, each reused only after the window's stream sync
     uint8_t* pin = nullptr;

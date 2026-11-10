@@ -196,20 +196,28 @@ bool Verifier::dm_init(std::string& err) {
     }
     // The staged share: on one card, a batch window's layer with enough CPU misses sends some of them to CUDA0, copied
     // over PCIe from their RAM copies into staging while the pool reads the rest.  An expert without a mapped RAM copy
-    // is never staged; the addresses are read again before a batch window when the source's places moved (a swap).
+    // is never staged; the addresses are read again before a window when the source's places moved (a swap).
     // The count staged for m misses balances the pool's time for the rest against the copy's, both reading host
-    // memory at once.
+    // memory at once.  --exp solo_stage=1 also stages a single request's windows of two or more rows, and takes
+    // layers of mixed expert sizes: every slot holds the largest blob, each copy moves its own layer's
+    // (stage_cpu_gbps / stage_link_gbps: the pool's and the link's rates the split is planned with).
+    d->stage_solo = basalt::core::exp_flag("solo_stage") != 0.0;
     bool stage = d->pdev < 0 && d->xp.empty() && lb_ == 0 && le_ == g.n_layers && hand_in_ == nullptr &&
                  warm_src_ != nullptr && staging_ != nullptr && warm_src_->pcie_layer(0) && lay.fmt[0].bytes % 16 == 0;
-    for (int64_t l = 1; stage && l < g.n_layers; ++l) stage = lay.fmt[(size_t) l].bytes == lay.fmt[0].bytes;
-    const int64_t blob = (int64_t) lay.fmt[0].bytes, stride = dec_moe_stage_stride(blob);
+    for (int64_t l = 1; stage && l < g.n_layers; ++l)
+        stage = lay.fmt[(size_t) l].bytes % 16 == 0 && (d->stage_solo || lay.fmt[(size_t) l].bytes == lay.fmt[0].bytes);
+    const int64_t blob = (int64_t) (d->stage_solo ? lay.max_blob : lay.fmt[0].bytes), stride = dec_moe_stage_stride(blob);
     const int stage_slots =
         (int) std::min<int64_t>(kDmStageMax, (int64_t) (kStagingBlobs * (int64_t) lay.max_blob) / stride);
+    if (!stage && d->stage_solo)
+        basalt::log::info("basalt verify", "solo staging: not available here (peers, a layer split or no mapped RAM copies)");
     if (stage && stage_slots >= 1) {
         // per layer: the pool's experts after its doorbell, the staged ones after the copy, their own launches and
         // the combine's wait for them
-        constexpr double kPoolBytesPerUs = 45e3, kLinkBytesPerUs = 18e3, kPoolFixUs = 15.0, kStageFixUs = 35.0;
-        const double cpu_us = (double) blob / kPoolBytesPerUs, link_us = (double) blob / kLinkBytesPerUs;
+        constexpr double kPoolFixUs = 15.0, kStageFixUs = 35.0;
+        const double pool_bytes = std::max(1.0, basalt::core::exp_flag("stage_cpu_gbps", 45.0)) * 1e3;
+        const double link_bytes = std::max(1.0, basalt::core::exp_flag("stage_link_gbps", 18.0)) * 1e3;
+        const double cpu_us = (double) blob / pool_bytes, link_us = (double) blob / link_bytes;
         std::vector<int32_t> kt((size_t) kDmCap + 1, 0);
         for (int m = 1; m <= kDmCap; ++m) {
             double best = kPoolFixUs + m * cpu_us;
@@ -235,6 +243,9 @@ bool Verifier::dm_init(std::string& err) {
         d->stage_blocks = 8;
         d->stage_min = 1;
         while (d->stage_min < kDmCap && kt[(size_t) d->stage_min] == 0) ++d->stage_min;
+        if (d->stage_solo)
+            basalt::log::info("basalt verify", "solo staging: %d+ CPU misses, %lld-byte slots, up to %d staged a layer",
+                              d->stage_min, (long long) d->stage_stride, stage_slots);
     }
     std::string served;
     if (d->pdev >= 0) {
