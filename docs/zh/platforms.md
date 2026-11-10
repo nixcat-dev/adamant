@@ -63,7 +63,7 @@ cmake --build build -j
 ctest --test-dir build -L cpu -j 8 --output-on-failure
 ```
 
-若测试创建样例失败，把 `TEMP` 与 `TMP` 指向构建目录树内。CUDA 13.2+ 的头文件需要 `/Zc:preprocessor`；CMakeLists
+若测试创建 fixture 失败，把 `TEMP` 与 `TMP` 指向构建目录树内。CUDA 13.2+ 的头文件需要 `/Zc:preprocessor`；CMakeLists
 会给 nvcc 的主机编译器传这个 flag。
 
 ## 两个构建下的数值

@@ -28,10 +28,10 @@ Adamant 的目标是在 NVIDIA Ada GPU 上运行 Qwen3.8-Flash-Next，并接受 
 ## 每项变更必须包含的内容
 
 1. **一致性测试（parity test）**：每个新增或改动的 kernel 都要有：随机输入加上真实模型几何，对照 (a) 它所替换的当前 Basalt kernel 和 (b) 该运算的纯 CPU 参考实现（先反量化，再以双精度累加）比较。报告相对两者的最大绝对误差和相对误差。要求按位保持不变的 kernel，必须与当前 kernel 的冻结输出哈希一致。一个 token 的输出不得取决于 batch/窗口宽度或该 token 在其中的位置；测试必须检查这一点。
-2. **一份 profile。** 给出 kernel 的 microbench 行：每次调用的 µs 和达到的 GB/s（或 TFLOP/s），相对于它必须搬运的字节数或 FLOPs。给出 `basalt-bench` 的端到端数字：每个 decode 窗口的毫秒数和 passes/s，而不只是 tok/s——draft 的运气会让 tok/s 波动 ±3-5%。
+2. **一份 profile。** 给出 kernel 的 microbench 行：每次调用的 µs 和达到的 GB/s（或 TFLOP/s），相对于它必须搬运的字节数或 FLOPs。给出 `basalt-bench` 的端到端数字：每个 decode 窗口的毫秒数和 passes/s，而不只是 tok/s——draft 的运气会让 tok/s 波动。
 3. **一次质量检查：**
    - 输出按位一致：给出相对上一个构建的贪心（greedy）一致性检查。要固定专家层（pin），因为 GPU 模块大小的变化会改变自动确定的专家层规模，从而改变舍入。
-   - 改变了数值行为（新的归约顺序、精度、量化）：通过 decode 路径运行对照 BF16 参考的困惑度/KLD 关卡（[docs/precision/quality.md](docs/zh/precision/quality.md)）。把 PPL、平均 KLD 和 top-1 一致率与上一个构建的数字并列报告。大的改动需要完整的 100-chunk 运行，而不是只用 20-chunk 的快速关卡。
+   - 改变了数值行为（新的归约顺序、精度、量化）：通过 decode 路径运行对照 BF16 参考的困惑度/KLD 关卡（[docs/zh/precision/quality.md](docs/zh/precision/quality.md#bf16-参考基准)）。把 PPL、平均 KLD 和 top-1 一致率与上一个构建的数字并列报告。大的改动需要完整的 100-chunk 运行，而不是只用 20-chunk 的快速关卡。涵盖该变更的 `docs/precision/` 页面要在同一个变更里更新，其中引用的数字要换成新的。
 4. **基准测试规范：**
    - 每个性能数字都要注明强制生效的 GPU 功耗限制，A/B 运行之间保持一致。
    - A/B 比较要在同一个会话内交替运行两个构建（ABBA），两次的专家层都要固定在相同位置。不同会话里取的数字会漂移，不具可比性。
@@ -48,7 +48,9 @@ Adamant 的目标是在 NVIDIA Ada GPU 上运行 Qwen3.8-Flash-Next，并接受 
 
 ## 提交与 pull request
 
-- commit 要小而内聚，message 风格为 `area: what it does`。每个 commit 都必须能构建。
+- commit 要小而内聚，message 风格为 `area: what it does`。每个 commit 都必须能构建。跨多个领域的小改动算一个 commit。
+- commit message、注释或文档中不出现个人姓名或服务配置。
+- 移植或改编的工作要把原作者保留为 `Co-Authored-By` 行。
 - 绝不 amend 或 force-push 共享分支；要加新 commit。
 - 仓库里不放笔记、草稿文件或生成的报告。
 - 文档：单个文件不超过 300 行；更长的主题拆成一个文件夹里的多个文件；文档保持简短、无状态、不重复。网页 UI 文案使用正确的大小写（"Adamant"），且不使用长破折号。

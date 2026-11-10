@@ -9,16 +9,15 @@ Adamant 是 [Basalt](https://github.com/jesdga95/basalt) 的分支；Basalt 是 
 放不进 VRAM 的专家驻留在系统 RAM 中，并且可以可选地使用第二块 GPU 作为对等专家层。
 一台工作站就能运行大型 MoE 模型，对外提供 OpenAI 和 Anthropic 兼容的 API。
 
-**需要帮助：** 有多余算力可以借出来做测试？见[贡献指南](CONTRIBUTING.zh-CN.md#其他贡献方式)。
-
 <p align="center"><img src="docs/img/frontend.gif" alt="回复流式输出中的网页 UI" width="720"></p>
+
+**需要帮助：** 有多余算力可以借出来做测试？见[贡献指南](CONTRIBUTING.zh-CN.md#其他贡献方式)。
 
 ## 环境要求
 
 - 支持 AVX2 的 Linux x86-64（存在 AVX-512 时会使用它），或 Windows 10 1903+ x64（[平台](docs/zh/platforms.md)）。
 - 一块带 CUDA 13 的 NVIDIA Ada Lovelace（compute capability 8.9）或 Ampere（8.6）GPU。Ampere 尚未经过验证：sm_86 构建可以编译，但 Ampere 上的一致性、质量与性能仍待测量。
-- CMake 3.24 或更新版本、GCC 13 或更新版本（Linux）、Python 3.10 或更新版本。
-- 足够的系统 RAM，用来存放放不进 VRAM 的专家。
+- CMake 3.24 或更新版本、GCC 13 或更新版本（Linux）、Python 3.10 或更新版本，以及足够的系统 RAM，用来存放放不进 VRAM 的专家。
 
 ## 快速开始
 
@@ -49,7 +48,8 @@ hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --l
 bin/basalt serve --config basalt_config.json
 ```
 
-服务器默认监听 127.0.0.1。
+服务器默认监听 127.0.0.1。每一项设置：[配置](docs/zh/configuration/index.md)。更多示例：
+[示例配置](docs/zh/configuration/examples.md)。
 
 ## Ada 上的实测
 
@@ -61,13 +61,16 @@ bin/basalt serve --config basalt_config.json
 
 ## 模型
 
-<p align="center"><img src="docs/assets/basalt-format.png" alt=".basalt 文件内部结构" width="800"></p>
+| | Qwen3.8-Flash-Next |
+|---|---|
+| Packs | 默认 `Qwen3.8-FN-NVFP4-DQ6_K`，[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) |
+| Context | 默认 8,192；`--max-context` 可设置 |
+| Drafting | pack 内置的 MTP drafter，开启；`--spec` 默认 8 |
+| Images | 支持 |
+| 指南 | [指南](docs/zh/models/qwen38-flash-next.md) |
+| 精度 | [精度](docs/zh/precision/qwen38-flash-next.md) |
 
-开箱即用的 pack，每一款的质量都对照全精度（BF16 参考）测量过，发布在
-[Hugging Face](https://huggingface.co/jesdga/Qwen3.8-Flash-Next-Basalt) 上：
-`Qwen3.8-FN-NVFP4-DQ6_K`、`-NVFP4-DQ8`、`-UD-IQ1_S`、`-UD-IQ1_M`、`-UD-IQ2_XS`、`-UD-IQ3_XXS`、`-UD-IQ4_XS`、`-UD-Q4_K_XL`、`-UD-Q5_K_XL`、`-UD-Q6_K_XL` 和 `-Q8_0`（每个都是 `.basalt`）。
-两个 NVFP4 pack 共用 NVIDIA 的 NVFP4 专家；`D` 表示 dense 投影的格式：DQ6_K 是默认值且更快，DQ8 在 prose 上约慢 7%，KLD 更低（[精度](docs/zh/precision/qwen38-flash-next.md)）。
-一个模型就是一个文件：权重、分词器、MTP drafter、8-bit hyper-connection 副本和 vision projector。专家 profile 随引擎一起发布（[data/profiles](data/profiles)）。
+所有模型对比：[模型](docs/zh/models/index.md)。
 
 在 Ada 上，NVFP4 pack 经由整数 MMQ 路径运行，而不是原生 FP4 张量指令，因此其数值与 Blackwell 上的运行不同；IQ3_S、Q4_K 和 Q5_K 格式使用相同的 kernel。`Qwen3.8-FN-GSQ-RCO-IQ3_S` 是上述测量所用的量化，也是 24 GB 显卡的推荐起点。可以从 GGUF 在本地构建 pack，包括 drafter（[模型文件](docs/zh/model-file.md)、[Ada 上的精度](docs/zh/precision/ada.md)）。
 

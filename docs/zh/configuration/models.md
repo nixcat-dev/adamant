@@ -57,7 +57,7 @@
 | 磁盘上的会话 | 保留在各模型自己的目录 |
 | RAM 和槽位中的会话 | `conversation-cache-disk-mib` 开启时在退出时写盘；否则丢失 |
 | 睡眠中的引擎 | 下一个发给它的请求把它唤醒 |
-| `POST /v1/vram` | 属于整台机器；对每个能调整自身层的模型生效 |
+| `POST /v1/vram` | 属于整台机器；对每个能调整自身专家层的模型生效 |
 | 指标 | 每个模型各自（`GET /metrics?model=NAME`） |
 
 `POST /v1/load` 带 `{"model": NAME}` 会抢在请求之前换模型。`/health` 和 `/metrics` 显示换模型的进度。控制台打印

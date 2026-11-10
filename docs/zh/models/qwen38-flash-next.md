@@ -12,7 +12,7 @@
 - `NVFP4-DQ6_K`（默认）与 `NVFP4-DQ8`：NVIDIA 的 NVFP4 专家。`D` 是稠密投影的格式：Q6_K，DQ8 则是 Q8_0。
   DQ8 比 DQ6_K 慢，KLD 更低（[精度](../precision/qwen38-flash-next.md#6-bit-稠密投影)）。
 - `UD-IQ1_S`、`UD-IQ1_M`、`UD-IQ2_XS`、`UD-IQ3_XXS`、`UD-IQ4_XS`、`UD-Q4_K_XL`、`UD-Q5_K_XL`、`UD-Q6_K_XL` 和 `Q8_0`：Unsloth 的 GGUF 类型。
-- Unsloth 的 `UD-IQ1_S` GGUF 按原样转换（70.4 GB）。其中一层的 gate 行为 IQ2_S、up 行为 IQ2_XXS；每一层都与其他
+- Unsloth 的 `UD-IQ1_S` GGUF 按原样转换（70.4 GB）。其中一层的 gate 行是 IQ2_S、up 行是 IQ2_XXS；每一层都与其他
   UD pack 跑相同的快速 kernel。
 
 大小以卡上为准。布局以及如何自己构建 pack：[模型文件](../model-file.md)。
@@ -48,7 +48,7 @@ pack 带 MTP drafter 时开启。`--spec N` 设置窗口（默认 8：最后一�
 
 ## 并行槽位
 
-`--parallel N`（1 到 8）同时服务 N 个请求（[运行](../running.md)）。
+`--parallel N`（1 到 8）同时服务 N 个请求（[运行](../running.md#并发请求--parallel-n)）。
 
 ## 有损标志
 

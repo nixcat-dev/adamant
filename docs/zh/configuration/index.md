@@ -66,7 +66,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `open` | server | 开关 | 关闭 | 就绪后打开网页。 |
 | `lazy` | server | 开关 | 关闭 | 以未加载状态启动；第一个请求时加载。会丢掉 sidecar 编码器。 |
 | `idle-unload` | 条目 | 秒 | 关闭 | 空闲这么久后卸载。为其他程序让出 VRAM。 |
-| `idle-sleep` | 条目 | 秒 | 关闭 | 空闲这么久后睡眠：VRAM 释放、RAM 保留，几秒内唤醒。仅 Linux。[运行](../running.md) |
+| `idle-sleep` | 条目 | 秒 | 关闭 | 空闲这么久后睡眠：VRAM 释放、RAM 保留，几秒内唤醒。仅 Linux。[运行](../running.md#睡眠--idle-sleep) |
 | `min-free-vram-mib` | 条目 | 整数 | 关闭 | 只有空闲 VRAM 达到这个量才加载未加载的模型；否则 503。 |
 | `grammar` | 条目 | 开关（`--no-grammar`） | 开启 | 在引擎内把工具调用和 JSON 格式（`json_object`、`json_schema`）约束到 schema。关闭时其他 JSON 格式以 400 拒绝。 |
 | `max-payload-mib` | server | MiB | `256` | 服务器读取的最大请求体；更大的得到 413。 |
@@ -99,18 +99,16 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 
 ## 专家缓存与内存
 
-模型的专家存放在 VRAM（专家缓存）、RAM 或文件中。这些设置决定放在哪里。
-
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
-| `vram-reserve-mib` | engine | MiB，至少 256（Linux 上 128） | 700（卡上槽位太少时降到 300） | 主卡上为图、scratch 和 head 保留的空闲 VRAM。会提高到 kernel 需要的下限（Linux 上 `--parallel 4` 时……）。 |
+| `vram-reserve-mib` | engine | MiB，至少 256（Linux 上 128） | 700（卡上槽位太少时降到 300） | 主卡上为图、scratch 和 head 保留的空闲 VRAM。会提高到 kernel 需要的下限（Linux 上 `--parallel 4` 时至少 320）。 |
 | `resident-experts` | engine | 开关 | 有 profile 时开启 | 仅 Flash-Next。把 GPU 不持有的专家放进页锁定 RAM。RAM 不够时退回文件映射。 |
 | `resident-budget-gib` | engine | GiB | auto | 最多 N GiB 的专家放进 RAM，最热的优先。 |
 | `mmap-experts` | engine | 开关 | 关闭 | 仅 Flash-Next。用文件映射代替 RAM 副本。 |
 | `shared-expert-arena` | engine | 文件路径 | 关闭 | 仅 Flash-Next。让多个进程共用一份常驻 arena 文件（放在 `/dev/shm`）。 |
 | `expert-profile` | engine | 文件 | `data/profiles/<arch>-<layers>x<experts>.prof` | 哪些专家起步就驻留 VRAM。 |
 | `expert-profile-save` | engine | 文件 | 关闭 | 仅 Flash-Next。退出时和定期保存学到的放置；启动时据此放置。需要自适应层。 |
-| `expert-profile-save-every` | engine | 分钟 | 10（`0` 表示只在退出时） | 保存周期。 |
+| `expert-profile-save-every` | engine | 分钟 | 10（`0` 表示只在退出时） | 仅 Flash-Next。保存周期。 |
 | `resident-cpu-experts` | engine | 开关 | 关闭（`resident-experts` 隐含开启） | 仅 Flash-Next。配合 `mmap-experts`：把常驻 RAM 的专家放在普通 RAM 中。 |
 | `vram-elastic` | engine | 开关 | 关闭 | 仅 Flash-Next。把专家缓存分成段，让 `POST /v1/vram` 能在请求之间出借 VRAM。 |
 | `vram-segment-mib` | engine | MiB，至少 64 | 512 | 仅 Flash-Next。`vram-elastic` 的段大小。 |
@@ -119,11 +117,9 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `adapt-every` | engine | 窗口数 | 服务器上 1，层拆分时 4（`0` 关闭） | 仅 Flash-Next。每 N 个窗口做一次自适应轮。[自适应层](adaptive.md) |
 | `adapt-swaps` | engine | 整数 | 96（`0` 关闭） | 仅 Flash-Next。一轮最多换入主 GPU 的专家数。[自适应层](adaptive.md) |
 | `peer-adapt-swaps` | engine | 整数 | `adapt-swaps` | 仅 Flash-Next。一轮最多换入对等卡的专家数。 |
-| `adapt-decay` | engine | 数字 | 服务器上 0.85，层拆分时 0.7 | 仅 Flash-Next。每轮之后对路由计数施加的系数。[自适应层](adaptive.md) |
+| `adapt-decay` | engine | 数字 | 0.85（层拆分时 0.7） | 仅 Flash-Next。每轮之后对路由计数施加的系数。[自适应层](adaptive.md) |
 
 ## 提示词处理
-
-提示词按批分块读取。这些设置决定块大小，以及流式专家如何共享。
 
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
@@ -169,14 +165,14 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `conversation-cache-slots` | engine | 整数 | 4 | 最多停放的会话数。 |
 | `conversation-cache-min-free-mib` | engine | MiB | 2560 | 停放时保留的物理 RAM。 |
 | `conversation-cache-min-tokens` | engine | token | 0 | 只停放 token 数不少于这个值的会话。 |
-| `conversation-cache-disk-mib` | engine | MiB | 0（关闭） | 停放会话的磁盘预算。[运行](../running.md) |
+| `conversation-cache-disk-mib` | engine | MiB | 0（关闭） | 停放会话的磁盘预算。[运行](../running.md#磁盘上的会话--conversation-cache-disk-mib) |
 | `conversation-cache-dir` | engine | 目录 | 模型缓存目录 | 磁盘层使用另一个目录。 |
 
 ## 视觉
 
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
-| `vision` | 条目 | `off`、`dynamic`、`cpu`、GPU 编号 | `off` | 图像输入。给 GPU 编号会在那张卡上跑 sidecar（占用其专家缓存约 2.2 GiB）。`cpu` 很慢。需要带 vision projector 的模型。每张图 32 MiB、64 百万像素。[运行](../running.md) |
+| `vision` | 条目 | `off`、`dynamic`、`cpu`、GPU 编号 | `off` | 图像输入。给 GPU 编号会在那张卡上跑 sidecar（占用其专家缓存约 2.2 GiB）。`cpu` 很慢。需要带 vision projector 的模型。每张图 32 MiB、64 百万像素。[运行](../running.md#视觉--vision) |
 | `image-url-host` | server | `HOST` 或 `HOST:PORT`，可重复 | 无 | 允许其他机器使用该主机上的 `http(s)` 图像 URL。[图像来源](image-sources.md) |
 | `image-dir` | server | 目录，可重复 | 无 | 允许其他机器使用该目录下的图像文件。[图像来源](image-sources.md) |
 | `image-remote-only` | server | 开关 | 关闭 | 把本机请求也当作远程请求。[图像来源](image-sources.md) |
