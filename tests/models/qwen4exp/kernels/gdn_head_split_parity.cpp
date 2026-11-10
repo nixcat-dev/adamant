@@ -692,7 +692,7 @@ int main(int argc, char** argv) {
     cudaDeviceProp p{};
     CK(cudaGetDeviceProperties(&p, 0));
     if (!basalt::cuda_target::supports(p.major, p.minor)) {
-        std::printf("gdn_head_split_parity: needs compute capability 8.9 (got %d.%d)\n", p.major, p.minor);
+        std::printf("gdn_head_split_parity: needs compute capability 8.9 or 8.6 (got %d.%d)\n", p.major, p.minor);
         return 77;
     }
     g_dev1 = ndev > 1 ? 1 : 0;

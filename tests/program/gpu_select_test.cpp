@@ -79,18 +79,22 @@ int main() {
     // Exact capability matching is shared with the runtime.
     {
         static_assert(basalt::cuda_target::supports(8, 9));
-        static_assert(!basalt::cuda_target::supports(8, 6));
+        static_assert(basalt::cuda_target::supports(8, 6));
+        static_assert(!basalt::cuda_target::supports(8, 0));
         static_assert(!basalt::cuda_target::supports(9, 0));
         static_assert(!basalt::cuda_target::supports(12, 0));
         CHECK(gpu_supported(card(0, "unknown", 0, 0, 0, 0)));
         CHECK(!gpu_supported(card(0, "invalid", 0, 9, 0, 0)));
-        for (const auto& cc : {std::pair{8, 0}, std::pair{8, 6}, std::pair{9, 0},
+        for (const auto& cc : {std::pair{8, 0}, std::pair{9, 0},
                                std::pair{12, 0}, std::pair{13, 0}}) {
             const std::vector<GpuCard> v = {card(0, "unsupported", cc.first, cc.second, 1, 1)};
             CHECK(!pick("", v).error.empty());
             CHECK(!pick("0", v).error.empty());
-            CHECK_STR(pick("auto", v).error, "gpu auto: no sm_89 GPU visible");
+            CHECK_STR(pick("auto", v).error, "gpu auto: no sm_89 or sm_86 GPU visible");
         }
+        const std::vector<GpuCard> ampere = {card(0, "ampere", 8, 6, 448, 8)};
+        CHECK(pick("auto", ampere).error.empty());
+        CHECK(pick("0", ampere).error.empty());
     }
     // Explicit order, default warnings, role assignment and serialization.
     {
@@ -131,13 +135,13 @@ int main() {
         GpuChoice c = pick("auto", v);
         CHECK_STR(cards(c), "2,0,3");
         CHECK(c.notes.size() == 1);
-        if (c.notes.size() == 1) CHECK_STR(c.notes[0], "gpu auto: GPU 1 (other) skipped, not sm_89");
+        if (c.notes.size() == 1) CHECK_STR(c.notes[0], "gpu auto: GPU 1 (other) skipped, not sm_89 or sm_86");
         CHECK_STR(roles(v, c, 1), "main,expert tier,idle");
         CHECK_STR(roles(v, c, 3), "main,expert tier,expert tier");
         c = pick("", v);
         CHECK_STR(cards(c), "0");
         CHECK_STR(c.warning, "GPU 2 (fast), GPU 3 (small) unused; use gpu 0,2,3 or gpu auto");
-        CHECK_STR(pick("1", v).error, "gpu: GPU 1 (other) is sm_120, not sm_89");
+        CHECK_STR(pick("1", v).error, "gpu: GPU 1 (other) is sm_120, not sm_89 or sm_86");
         CHECK_STR(cards(pick("3,2,0", v)), "3,2,0");
         const std::vector<GpuCard> first = {v[1], v[2]};
         CHECK(!pick("", first).error.empty());

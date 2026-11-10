@@ -543,9 +543,8 @@ int main(int argc, char** argv) {
     cudaGetDevice(&dev);
     cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
     cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
-    if (!basalt::cuda_target::supports(major, minor)) {   // the kernels are built for one target, not a range
-        std::printf("dense_tc is built for compute capability %d.%d, this device is %d.%d; skipped\n",
-                    basalt::cuda_target::major, basalt::cuda_target::minor, major, minor);
+    if (!basalt::cuda_target::supports(major, minor)) {
+        std::printf("dense_tc needs compute capability 8.9 or 8.6, this device is %d.%d; skipped\n", major, minor);
         return 77;
     }
     cudaStream_t s;

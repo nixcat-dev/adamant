@@ -25,8 +25,8 @@
 #define GGML_COMMON_IMPL_CUDA
 #include "basalt/ggml/ggml_common.h"
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890
-#error "the MMQ kernels are built for compute capability 8.9 only"
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ != 890 && __CUDA_ARCH__ != 860
+#error "the MMQ kernels are built for compute capability 8.9 or 8.6 only"
 #endif
 
 #define WARP_SIZE 32
