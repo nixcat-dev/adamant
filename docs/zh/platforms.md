@@ -2,8 +2,8 @@
 
 [English](../platforms.md)
 
-Adamant 原生运行于 Linux x64 与 Windows x64，硬件为 NVIDIA Ada Lovelace（sm_89）。Linux 是 engine 测试与跑
-基准的平台。CI 两个平台都构建，并各跑 CPU 测试。GPU 测试与质量门槛在带卡的机器上运行。
+Adamant 原生运行于 Linux x64 与 Windows x64，硬件为 NVIDIA Ada Lovelace（sm_89）与 Ampere（sm_86）。Linux 是 engine 测试与跑
+基准的平台。CI 两个平台都构建，并各跑 CPU 测试。GPU 测试与质量门槛在带卡的机器上运行。sm_86 构建可以编译；Ampere 上的一致性、质量与性能仍待测量。
 
 ## 系统要求
 
@@ -12,7 +12,7 @@ Adamant 原生运行于 Linux x64 与 Windows x64，硬件为 NVIDIA Ada Lovelac
 | 操作系统 | x86-64，AVX2（有 AVX-512 时也会使用） | Windows 10 1903+ x64 |
 | 编译器、构建 | GCC 13+、CMake 3.24+ | MSVC 19.44（VS 2022）、CMake 3.24+、Ninja |
 | CUDA、Python | 13、3.10+ | 13、3.10+ |
-| GPU | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） | NVIDIA Ada Lovelace（sm_89）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） |
+| GPU | NVIDIA Ada Lovelace（sm_89）或 Ampere（sm_86）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） | NVIDIA Ada Lovelace（sm_89）或 Ampere（sm_86）；可选第二张 GPU 作为对等专家层（`gpu 0,1`） |
 
 ## 发布归档
 

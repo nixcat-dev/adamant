@@ -2,9 +2,11 @@
 
 [简体中文](README.zh-CN.md)
 
-Adamant is an Ada Lovelace (RTX 40-series, sm_89) fork of
+Adamant is a fork of
 [Basalt](https://github.com/jesdga95/basalt), the local inference engine for the
-**Qwen3.8-Flash-Next** mixture-of-experts model, itself based on Strata.
+**Qwen3.8-Flash-Next** mixture-of-experts model, itself based on Strata. It targets NVIDIA Ada
+Lovelace (RTX 40-series, sm_89) and Ampere (RTX 30-series, sm_86) GPUs; the Ampere port builds
+but is not yet validated.
 
 > **Status: early development.** The Ada port builds and passes its Linux test
 > suite on an RTX 4090, but numerical quality and headline performance are still
@@ -24,7 +26,9 @@ A large MoE model runs on one workstation, behind an OpenAI- and Anthropic-compa
 ## Requirements
 
 - Linux x86-64 with AVX2 (AVX-512 is used when present), or Windows 10 1903+ x64 ([platforms](docs/platforms.md)).
-- An NVIDIA Ada Lovelace GPU (compute capability 8.9) with CUDA 13.
+- An NVIDIA Ada Lovelace (compute capability 8.9) or Ampere (8.6) GPU with CUDA 13. Ampere is not
+  yet validated: the sm_86 build compiles, but parity, quality and performance on Ampere are still
+  to be measured.
 - CMake 3.24 or newer, GCC 13 or newer (Linux), Python 3.10 or newer, and enough system RAM for the experts that do not fit in VRAM.
 
 ## Quick start
@@ -37,9 +41,10 @@ pip install -r requirements.txt
 hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --local-dir models
 ```
 
-The build targets sm_89 only; `-DCMAKE_CUDA_ARCHITECTURES` with anything else is
-refused. The toolchain and test invocations used for the results below are in
-[Ada execution and validation](docs/precision/ada.md).
+The build targets sm_89 by default and also builds for sm_86; `-DCMAKE_CUDA_ARCHITECTURES`
+accepts `86`, `89` or `86;89`, and anything else is refused. The toolchain and test invocations
+used for the results below are in [Ada execution and validation](docs/precision/ada.md), which
+also lists what is still open on Ampere.
 
 The binary and file-format names stay `basalt` and `.basalt`: the packs are the
 same files Basalt reads, so a fork that renamed them would break every existing

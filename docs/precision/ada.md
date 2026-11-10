@@ -7,6 +7,22 @@ passes with CUDA 13.0.88, GCC 14.3.1, and warnings as errors. Runtime validation
 is incomplete; compilation does not establish numerical correctness. Upstream
 measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages beside it are not Adamant results.
 
+## Ampere (sm_86)
+
+`include/basalt/cuda_target.hpp` accepts compute capability 8.6 alongside 8.9;
+`CMAKE_CUDA_ARCHITECTURES` takes `86`, `89` or `86;89` (default `89`), anything else is a
+configure error. `gpu "auto"` selects every visible Ada or Ampere card; an explicit card of
+another capability stops the start. No kernel uses FP8 or FP4 tensor instructions (NVFP4 runs
+as integer MMQ), so no weight pack or KV format is excluded on 8.6 by design.
+
+Ampere is not yet validated. The sm_86 build compiles; still open on Ampere hardware:
+
+- Kernel parity tests against the current and CPU reference kernels.
+- Decode-path PPL/KLD against the BF16 reference (`basalt-bench --quality`).
+- Memcheck of the `cp.async` copy paths.
+- Fast paths gated on SM count and their fallback on smaller cards.
+- Performance and default tuning for 8 GB-class cards.
+
 ## Execution changes
 
 | Operation | Adamant implementation | Numerical consequence requiring validation |

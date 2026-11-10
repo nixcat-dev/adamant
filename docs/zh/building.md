@@ -59,5 +59,5 @@ bin/basalt-bench --community --model Qwen3.8-FN-NVFP4-DQ6_K.basalt --submitter Y
 记录引擎 commit、引擎用到的 GPU（主卡在前）及其来自 NVML 的 VRAM 和强制功耗限制、系统
 RAM、操作系统（`Linux`、`Windows` 或 `WSL2`）、pack 的量化标签。每个专家都必须位于 VRAM、对等 GPU 或 RAM 中：若引擎会从 SSD 读取任何专家，bench 会在测量前停止，说明会有多少 GiB 溢出、大约还需要多少空闲 RAM，返回非零退出码并且不打印行。必须有 NVML；
 没有它，或者不是 git 构建，运行会停止并给出提示。只接受 `--model`、`--submitter`、`--fixtures`（仓库的
-`data/bench`）、`--logs` 和 `--print-command`：任何其他 bench 选项或引擎标志都会改变负载，会被拒绝。该运行使用每一块可见的 Ada GPU（`--gpu auto`；拒绝 `--gpu`）；用
+`data/bench`）、`--logs` 和 `--print-command`：任何其他 bench 选项或引擎标志都会改变负载，会被拒绝。该运行使用每一块可见的 Ada 或 Ampere GPU（`--gpu auto`；拒绝 `--gpu`）；用
 `CUDA_VISIBLE_DEVICES` 选卡，例如单卡行用 `CUDA_VISIBLE_DEVICES=0`。预设的版本会随负载的变化而变化。

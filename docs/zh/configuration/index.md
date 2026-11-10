@@ -82,7 +82,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 
 | 设置 | 位置 | 类型、取值 | 默认值 | 作用 |
 | --- | --- | --- | --- | --- |
-| `gpu` | 条目、`basalt`、`basalt-bench`、`basalt-probe` | `"0"`、`"0,1"`、`"auto"` | 仅 GPU 0 | 按 `nvidia-smi` 编号的卡。第一张是主卡。`auto` 取每一块 Ada（sm_89）卡，并把最快的一张作为主卡。[GPU](gpus.md) |
+| `gpu` | 条目、`basalt`、`basalt-bench`、`basalt-probe` | `"0"`、`"0,1"`、`"auto"` | 仅 GPU 0 | 按 `nvidia-smi` 编号的卡。第一张是主卡。`auto` 取每一块 Ada（sm_89）或 Ampere（sm_86）卡，并把最快的一张作为主卡。[GPU](gpus.md) |
 | `peer-reserve-mib` | engine | MiB | 600 | 第二张卡在其专家和提示词缓冲之外保留的空闲 VRAM。启动信息提示对等卡缓冲放不下时调高它。[GPU](gpus.md#两张-16-gb-卡) |
 
 ## 上下文与 KV 缓存

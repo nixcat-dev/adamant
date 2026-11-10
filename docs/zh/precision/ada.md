@@ -6,6 +6,21 @@ Adamant 的 Ada 实现尚处于开发早期。Linux sm_89 Release 构建已在 C
 和警告视为错误的条件下编译通过。运行时验证尚不完备；能编译并不能确立数值正确性。
 [qwen38-flash-next.md](qwen38-flash-next.md) 及与其并列的页面中的上游测量结果不是 Adamant 的结果。
 
+## Ampere（sm_86）
+
+`include/basalt/cuda_target.hpp` 在 8.9 之外接受 compute capability 8.6；`CMAKE_CUDA_ARCHITECTURES`
+接受 `86`、`89` 或 `86;89`（默认 `89`），其他值为配置错误。`gpu "auto"` 选择每一块可见的 Ada 或
+Ampere 卡；显式指定的其他能力的卡会终止启动。任何 kernel 都不使用 FP8 或 FP4 tensor 指令
+（NVFP4 走整数 MMQ），因此按设计没有任何 weight pack 或 KV 格式在 8.6 上被排除。
+
+Ampere 尚未经过验证。sm_86 构建可以编译；Ampere 硬件上仍未完成的有：
+
+- 对照当前与 CPU 参考 kernel 的一致性测试。
+- 针对 BF16 参考的 decode 路径 PPL/KLD（`basalt-bench --quality`）。
+- `cp.async` copy 路径的 memcheck。
+- 依 SM 数量设门槛的快速路径及其在更小卡上的回退。
+- 8 GB 级卡的性能与默认调优。
+
 ## 执行改动
 
 | 操作 | Adamant 实现 | 需要验证的数值后果 |
