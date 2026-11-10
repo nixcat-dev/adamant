@@ -1242,7 +1242,8 @@ class Service:
                                 "drafts_offered": last.get("drafts_offered"),
                                 "drafts_accepted": last.get("drafts_accepted"),
                                 "ttft_s": round(ttft, 2) if ttft is not None else None,
-                                "draft_len": round(dl, 2) if dl is not None else None})
+                                "draft_len": round(dl, 2) if dl is not None else None,
+                                "reasoning_tokens": thinking_n})
                             self._note_best(self.history[-1])
                             fresh = getattr(self.engine, "last", None)
                             if fresh is not None and fresh is not before:      # a DONE line arrived for this request
