@@ -136,8 +136,11 @@ jobs:
         if: failure()
         run: |
           python - <<'PY'
-          import re
-          log = open("build/Testing/Temporary/LastTest.log", errors="replace").read()
+          import os, re, sys
+          path = "build/Testing/Temporary/LastTest.log"
+          if not os.path.exists(path):
+              sys.exit(0)
+          log = open(path, errors="replace").read()
           for block in re.split(r"\n(?=\d+/\d+ Test: )", log):
               if "Test Failed." not in block and "Test Timeout" not in block:
                   continue
