@@ -21,10 +21,18 @@ The Linux Release build was exercised on one NVIDIA A100-SXM4-80GB at its enforc
 power limit, with CUDA 13.0.88 and GCC 13.3.0. A clean build completed in 707.527 s. All 76
 CPU tests passed in 54.89 s; all 102 runnable GPU tests passed in 753.37 s. The two GPU skips
 were the single-GPU peer test and the model-dependent generation test; the latter passed when
-rerun with the downloaded pack. An end-to-end IQ3_S pack run loaded all 46.8 GiB of experts
-into VRAM with no spill and generated
-the `conv` fixture at 95.8 tok/s. This establishes the sm_80 build, kernel suite and generation
-path; the BF16 quality gate and multi-GPU paths remain open.
+rerun with the downloaded pack. End-to-end validation used the public Basalt v2
+`Qwen3.8-FN-UD-IQ3_XXS` pack at Hugging Face revision
+`65de5a9e636e8bbe1200cbcd6eb8aa421e6a66c6`, with int8 KV, `resident-experts`,
+`expert-cache auto`, `prefill auto`, a 262144-token maximum context and MTP `spec=8`.
+All 46.84 GiB of experts occupied VRAM, with no RAM or SSD spill. The standard decode
+fixtures measured 165.5 tok/s (`conv`, 1057 tokens), 274.0 tok/s (`struct`, 7230 tokens)
+and 138.7 tok/s (`prose`, 1200 tokens). A separate sampled run prefilled 65535 tokens at
+5711.22 tok/s end to end and then generated 512 tokens at 163.02 tok/s. The standard cold
+66617-token prefill measured 5734.0 tok/s in engine time and 5717 tok/s wall time. These
+figures validate this pack and configuration rather than establishing performance for every
+quant or workload. This establishes the sm_80 build, kernel suite, long-context prefill and
+generation paths; the BF16 quality gate and multi-GPU paths remain open.
 
 ### sm_86 status
 

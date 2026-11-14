@@ -38,7 +38,7 @@ git clone <adamant remote> && cd adamant
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j                  # bin/basalt, bin/basalt-bench, bin/basalt-probe, bin/basalt-vision
 pip install -r requirements.txt
-hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --local-dir models
+hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-UD-IQ3_XXS.basalt --local-dir models
 ```
 
 The build targets sm_89 by default and also builds for sm_86 and sm_80; `-DCMAKE_CUDA_ARCHITECTURES`
@@ -56,7 +56,7 @@ top-level `engine` block ([models and the router](docs/configuration/models.md))
 ```json
 {
   "version": 2,
-  "models": [{ "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "kv": "int8" }],
+  "models": [{ "model": "models/Qwen3.8-FN-UD-IQ3_XXS.basalt", "gpu": "0,1", "kv": "int8" }],
   "engine": { "expert-cache": "auto", "prefill": "auto", "resident-experts": true },
   "server": { "port": 8080 }
 }

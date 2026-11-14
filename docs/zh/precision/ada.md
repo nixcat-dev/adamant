@@ -18,10 +18,17 @@ Ampere 卡；显式指定的其他能力的卡会终止启动。任何 kernel �
 Linux Release 构建在一块 NVIDIA A100-SXM4-80GB 上测试，强制功耗上限为 400 W，
 工具链为 CUDA 13.0.88 和 GCC 13.3.0。一次干净构建用时 707.527 秒。76 项 CPU
 测试全部通过，用时 54.89 秒；102 项可运行 GPU 测试全部通过，用时 753.37 秒。
-两项 GPU 跳过分别是需要多卡的 peer 测试和需要模型的生成测试；后一项用下载的 pack 重跑后通过。端到端 IQ3_S
-pack 运行把 46.8 GiB 专家全部装入 VRAM，没有溢出，`conv` fixture 的生成速度为
-95.8 tok/s。这证明了 sm_80 的构建、kernel 测试套件和生成路径；BF16 质量门槛与多 GPU
-路径仍待完成。
+两项 GPU 跳过分别是需要多卡的 peer 测试和需要模型的生成测试；后一项用下载的 pack 重跑后通过。
+端到端验证使用 Hugging Face revision `65de5a9e636e8bbe1200cbcd6eb8aa421e6a66c6`
+的公开 Basalt v2 `Qwen3.8-FN-UD-IQ3_XXS` pack，配置为 int8 KV、
+`resident-experts`、`expert-cache auto`、`prefill auto`、262144 最大上下文以及
+MTP `spec=8`。全部 46.84 GiB 专家位于 VRAM，没有 RAM 或 SSD 溢出。标准 decode
+fixture 为：`conv` 165.5 tok/s（1057 tokens）、`struct` 274.0 tok/s（7230 tokens）、
+`prose` 138.7 tok/s（1200 tokens）。另一次采样运行以 5711.22 tok/s 端到端速度
+prefill 65535 tokens，随后以 163.02 tok/s 生成 512 tokens。标准 cold 66617-token
+prefill 为 engine 5734.0 tok/s、wall 5717 tok/s。这些数字只验证该 pack 与配置，不代表
+所有 quant 或 workload。这证明了 sm_80 的构建、kernel 测试套件、长上下文 prefill 与
+生成路径；BF16 质量门槛与多 GPU 路径仍待完成。
 
 ### sm_86 状态
 

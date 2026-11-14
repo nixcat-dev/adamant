@@ -26,7 +26,7 @@ git clone <adamant remote> && cd adamant
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j                  # bin/basalt, bin/basalt-bench, bin/basalt-probe, bin/basalt-vision
 pip install -r requirements.txt
-hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --local-dir models
+hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-UD-IQ3_XXS.basalt --local-dir models
 ```
 
 构建默认面向 sm_89，也支持 sm_86 和 sm_80；`-DCMAKE_CUDA_ARCHITECTURES` 接受 `80`、`86` 与 `89` 的任意组合，其他值会被拒绝。下面结果所使用的工具链和测试调用方式记录在 [Ada 平台的执行与验证](docs/zh/precision/ada.md) 中，该页同时列出 Ampere 上仍未完成的工作。
@@ -38,7 +38,7 @@ hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --l
 ```json
 {
   "version": 2,
-  "models": [{ "model": "models/Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt", "gpu": "0,1", "kv": "int8" }],
+  "models": [{ "model": "models/Qwen3.8-FN-UD-IQ3_XXS.basalt", "gpu": "0,1", "kv": "int8" }],
   "engine": { "expert-cache": "auto", "prefill": "auto", "resident-experts": true },
   "server": { "port": 8080 }
 }
