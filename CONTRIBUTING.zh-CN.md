@@ -2,11 +2,11 @@
 
 [English](CONTRIBUTING.md)
 
-Adamant 的目标是在 NVIDIA Ada GPU 上运行 Qwen3.8-Flash-Next，并接受 Ampere（sm_86）纳入范围。Ada 支持仍在开发中；继承来的 Blackwell 实现不能证明 Ada 上的正确性或性能。下面的[一致性、质量与基准测试规则](#每项变更必须包含的内容)规定了一项变更需要什么，[Ada 平台的执行与验证](docs/zh/precision/ada.md)记录了尚待测量的路径。
+Adamant 的目标是在 NVIDIA Ada GPU 上运行 Qwen3.8-Flash-Next，并接受 Ampere（sm_86 和 sm_80）纳入范围。Ada 支持仍在开发中；继承来的 Blackwell 实现不能证明 Ada 上的正确性或性能。下面的[一致性、质量与基准测试规则](#每项变更必须包含的内容)规定了一项变更需要什么，[Ada 平台的执行与验证](docs/zh/precision/ada.md)记录了尚待测量的路径。
 
 ## 适用范围
 
-- **只支持 Ada（sm_89）和 Ampere（sm_86）上的 CUDA。** 不支持 ROCm/HIP、AMD、Intel/SYCL/oneAPI、Apple/Metal，也没有仅 CPU 的主路径（驻留在 RAM 中的 CPU 专家和 `--vision cpu` 仍受支持）。其他 NVIDIA 架构不在范围内。每个受支持的架构运行各自经过验证的路径；Ada 与 Ampere 如何共享代码，在评审 Ampere 工作时再定。不支持的指令必须换成针对该架构、经过验证的实现，而不是藏在可启动的空 kernel 或 trap stub 后面。除非明确批准了范围变更，否则保持模型格式覆盖面。
+- **只支持 Ada（sm_89）和 Ampere（sm_86 和 sm_80）上的 CUDA。** 不支持 ROCm/HIP、AMD、Intel/SYCL/oneAPI、Apple/Metal，也没有仅 CPU 的主路径（驻留在 RAM 中的 CPU 专家和 `--vision cpu` 仍受支持）。其他 NVIDIA 架构不在范围内。每个受支持的架构运行各自经过验证的路径；Ada 与 Ampere 如何共享代码，在评审 Ampere 工作时再定。不支持的指令必须换成针对该架构、经过验证的实现，而不是藏在可启动的空 kernel 或 trap stub 后面。除非明确批准了范围变更，否则保持模型格式覆盖面。
 - **Linux 和 Windows x64 都受支持；在 Linux 上测试。** CI 在每个 pull request 上编译并对 Windows 做 CPU 测试。Windows 使用与 Linux 相同的 GPU 角色（主卡加专家层）运行，不作性能声明，Windows 的限制见 `docs/platforms.md`。变更不得移除平台接缝（`src/platform/`、CMake `if(WIN32)`）。仅影响 Windows 的问题打 `windows` 标签。官方基准数字以维护者的 Linux 运行为准。
 - **引擎代码与平台无关。** 在 `src/platform/` 和 `include/basalt/platform/` 之外，不得出现 `_WIN32`、`_MSC_VER`、`__linux__`、`<windows.h>`、`<sys/mman.h>`、`<unistd.h>` 或裸 OS 调用（mmap、madvise、pread、pthread/affinity、fork/exec/pipe、dlopen、读 /proc 或 /sys）。要调用平台层；缺少接缝时就在平台层里补上，Linux 和 Windows 各一个实现体，Linux 实现体就是你本来会写的那段代码，并在 `tests/platform/` 里加一个在两个平台上都运行的测试。路径一律 UTF-8，并经过平台的文件调用。`tools/check_platform_boundary.sh` 会强制执行这条规则。
 - **引擎日志行带有自己的级别。** 写到 stderr 的一行要经过 `include/basalt/log.hpp`（`basalt::log::info`、`warn` 或 `error`），输出格式为 `basalt <area>: [warning: |error: ]<text>`；服务器和终端只从这个标记读取级别，绝不从文字内容猜。warning 表示回退或功能丧失，error 表示失败或拒绝，其余都是 info。引擎代码在任何其他地方提及 stderr 时，`tools/check_stderr_logging.sh` 会报错。
@@ -65,7 +65,7 @@ Adamant 的目标是在 NVIDIA Ada GPU 上运行 Qwen3.8-Flash-Next，并接受 
   3. 提交它。
   4. 开一个 pull request；`pages` 工作流会运行同样的检查。
   5. 合并后，这一行就会出现在实测页面上。
-- Ada（sm_89）和 Ampere（sm_86）机器有空闲 GPU 时间就能帮忙验证这个移植；多卡系统还能覆盖对等专家执行。
+- Ada（sm_89）和 Ampere（sm_86 或 sm_80）机器有空闲 GPU 时间就能帮忙验证这个移植；多卡系统还能覆盖对等专家执行。
 - 几小时的机器远程访问也能加快开发。
 - 或者通过 GitHub Sponsors（仓库的 Sponsor 按钮）赞助项目：这笔钱用来支付 agentic 开发的 token，以及在不同硬件上租用时间做测试。
 

@@ -7,15 +7,36 @@ passes with CUDA 13.0.88, GCC 14.3.1, and warnings as errors. Runtime validation
 is incomplete; compilation does not establish numerical correctness. Upstream
 measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages beside it are not Adamant results.
 
-## Ampere (sm_86)
+## Ampere (sm_86 and sm_80)
 
-`include/basalt/cuda_target.hpp` accepts compute capability 8.6 alongside 8.9;
-`CMAKE_CUDA_ARCHITECTURES` takes `86`, `89` or `86;89` (default `89`), anything else is a
+`include/basalt/cuda_target.hpp` accepts compute capability 8.0 and 8.6 alongside 8.9;
+`CMAKE_CUDA_ARCHITECTURES` takes any combination of `80`, `86` and `89` (default `89`), anything else is a
 configure error. `gpu "auto"` selects every visible Ada or Ampere card; an explicit card of
 another capability stops the start. No kernel uses FP8 or FP4 tensor instructions (NVFP4 runs
-as integer MMQ), so no weight pack or KV format is excluded on 8.6 by design.
+as integer MMQ), so no weight pack or KV format is excluded on Ampere by design.
 
-Ampere is not yet validated. The sm_86 build compiles; still open on Ampere hardware:
+### sm_80 validation
+
+The Linux Release build was exercised on one NVIDIA A100-SXM4-80GB at its enforced 400 W
+power limit, with CUDA 13.0.88 and GCC 13.3.0. A clean build completed in 707.527 s. All 76
+CPU tests passed in 54.89 s; all 102 runnable GPU tests passed in 753.37 s. The two GPU skips
+were the single-GPU peer test and the model-dependent generation test; the latter passed when
+rerun with the downloaded pack. End-to-end validation used the public Basalt v2
+`Qwen3.8-FN-UD-IQ3_XXS` pack at Hugging Face revision
+`65de5a9e636e8bbe1200cbcd6eb8aa421e6a66c6`, with int8 KV, `resident-experts`,
+`expert-cache auto`, `prefill auto`, a 262144-token maximum context and MTP `spec=8`.
+All 46.84 GiB of experts occupied VRAM, with no RAM or SSD spill. The standard decode
+fixtures measured 165.5 tok/s (`conv`, 1057 tokens), 274.0 tok/s (`struct`, 7230 tokens)
+and 138.7 tok/s (`prose`, 1200 tokens). A separate sampled run prefilled 65535 tokens at
+5711.22 tok/s end to end and then generated 512 tokens at 163.02 tok/s. The standard cold
+66617-token prefill measured 5734.0 tok/s in engine time and 5717 tok/s wall time. These
+figures validate this pack and configuration rather than establishing performance for every
+quant or workload. This establishes the sm_80 build, kernel suite, long-context prefill and
+generation paths; the BF16 quality gate and multi-GPU paths remain open.
+
+### sm_86 status
+
+The sm_86 build compiles; still open on sm_86 hardware:
 
 - Kernel parity tests against the current and CPU reference kernels.
 - Decode-path PPL/KLD against the BF16 reference (`basalt-bench --quality`).

@@ -2,10 +2,10 @@
 
 [简体中文](zh/platforms.md)
 
-Adamant runs natively on Linux x64 and Windows x64, on NVIDIA Ada Lovelace (sm_89) and Ampere (sm_86). Linux is where
+Adamant runs natively on Linux x64 and Windows x64, on NVIDIA Ada Lovelace (sm_89) and Ampere (sm_86 or sm_80). Linux is where
 the engine is tested and benchmarked. CI builds both and runs the CPU tests on each. The GPU
-tests and the quality gate run on a machine with a card. The sm_86 build compiles; parity, quality
-and performance on Ampere are still to be measured.
+tests and the quality gate run on a machine with a card. The sm_80 build and GPU suite pass on an
+A100; parity, quality and performance on sm_86 are still to be measured.
 
 ## Requirements
 
@@ -14,7 +14,7 @@ and performance on Ampere are still to be measured.
 | OS | x86-64, AVX2 (AVX-512 used when present) | Windows 10 1903+ x64 |
 | Compiler, build | GCC 13+, CMake 3.24+ | MSVC 19.44 (VS 2022), CMake 3.24+, Ninja |
 | CUDA, Python | 13, 3.10+ | 13, 3.10+ |
-| GPU | NVIDIA Ada Lovelace (sm_89) or Ampere (sm_86); optional second GPU as a peer expert tier (`gpu 0,1`) | NVIDIA Ada Lovelace (sm_89) or Ampere (sm_86); optional second GPU as a peer expert tier (`gpu 0,1`) |
+| GPU | NVIDIA Ada Lovelace (sm_89) or Ampere (sm_86 or sm_80); optional second GPU as a peer expert tier (`gpu 0,1`) | NVIDIA Ada Lovelace (sm_89) or Ampere (sm_86 or sm_80); optional second GPU as a peer expert tier (`gpu 0,1`) |
 
 ## Release archives
 

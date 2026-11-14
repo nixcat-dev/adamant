@@ -544,7 +544,7 @@ int main(int argc, char** argv) {
     cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, dev);
     cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, dev);
     if (!basalt::cuda_target::supports(major, minor)) {
-        std::printf("dense_tc needs compute capability 8.9 or 8.6, this device is %d.%d; skipped\n", major, minor);
+        std::printf("dense_tc needs compute capability 8.9, 8.6 or 8.0, this device is %d.%d; skipped\n", major, minor);
         return 77;
     }
     cudaStream_t s;
