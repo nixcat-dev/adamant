@@ -8,11 +8,11 @@
 | --- | --- | --- |
 | 未设置 | 仅 GPU 0；启动时一条警告指出其他可见的卡 | GPU 0 |
 | `"0,1"`、`"1,0"` 等 | 正好是这些卡，按此顺序 | 列出的第一张 |
-| `"auto"` | 每一块可见的 Ada（sm_89）或 Ampere（sm_86）卡；其他卡被跳过并用一行指出 | 内存带宽最高的那张，然后 VRAM 最多的那张 |
+| `"auto"` | 每一块可见的 Ada（sm_89）或 Ampere（sm_86 或 sm_80）卡；其他卡被跳过并用一行指出 | 内存带宽最高的那张，然后 VRAM 最多的那张 |
 
 卡的编号与 `nvidia-smi` 一致。设置 `CUDA_VISIBLE_DEVICES` 时，编号在它的列表内计数（`CUDA_VISIBLE_DEVICES=1,0` 使 `gpu 0`
 成为 `nvidia-smi` 称为 1 的那张卡），它的编号也按 `nvidia-smi` 读。编号超出可见卡、同一张卡列了两次、或者某张卡既不是 Ada
-（sm_89）也不是 Ampere（sm_86），都会以错误停止启动。
+（sm_89）也不是 Ampere（sm_86 或 sm_80），都会以错误停止启动。
 
 主卡持有稠密权重、KV 缓存、drafter 和它自己的专家缓存。引擎决定其他卡做什么，并在启动时打印一行，例如
 `gpus: RTX 5090 (nvidia-smi 0) main, RTX 5060 Ti (nvidia-smi 1) expert tier`：

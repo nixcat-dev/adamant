@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-Adamant 是 [Basalt](https://github.com/jesdga95/basalt) 的分支；Basalt 是 **Qwen3.8-Flash-Next** 混合专家模型的本地推理引擎，其本身基于 Strata。Adamant 面向 NVIDIA Ada Lovelace（RTX 40 系列，sm_89）与 Ampere（RTX 30 系列，sm_86）GPU；Ampere 移植可构建，但尚未经过验证。
+Adamant 是 [Basalt](https://github.com/jesdga95/basalt) 的分支；Basalt 是 **Qwen3.8-Flash-Next** 混合专家模型的本地推理引擎，其本身基于 Strata。Adamant 面向 NVIDIA Ada Lovelace（RTX 40 系列，sm_89）与 Ampere（sm_86 和 sm_80）GPU。sm_80 移植已在 A100 上验证；sm_86 移植可构建，但尚未经过验证。
 
 > **状态：早期开发阶段。** Ada 移植可以构建，并在一块 RTX 4090 上通过其 Linux 测试套件，但数值质量和整体性能仍是未关闭的关口——见 [Ada 平台的执行与验证](docs/zh/precision/ada.md)。下面的性能数字是在一块卡上的开发性测试，不是维护者的官方基准数字。可能出现故障；标志、默认值和 pack 布局仍可能变化。保留 Linux 和 Windows 平台支持是一项移植要求。
 
@@ -16,7 +16,7 @@ Adamant 是 [Basalt](https://github.com/jesdga95/basalt) 的分支；Basalt 是 
 ## 环境要求
 
 - 支持 AVX2 的 Linux x86-64（存在 AVX-512 时会使用它），或 Windows 10 1903+ x64（[平台](docs/zh/platforms.md)）。
-- 一块带 CUDA 13 的 NVIDIA Ada Lovelace（compute capability 8.9）或 Ampere（8.6）GPU。Ampere 尚未经过验证：sm_86 构建可以编译，但 Ampere 上的一致性、质量与性能仍待测量。
+- 一块带 CUDA 13 的 NVIDIA Ada Lovelace（compute capability 8.9）或 Ampere（8.6 或 8.0）GPU。sm_80 构建及测试套件已在 A100 上验证；sm_86 上的一致性、质量与性能仍待测量。
 - CMake 3.24 或更新版本、GCC 13 或更新版本（Linux）、Python 3.10 或更新版本，以及足够的系统 RAM，用来存放放不进 VRAM 的专家。
 
 ## 快速开始
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 hf download jesdga/Qwen3.8-Flash-Next-Basalt Qwen3.8-FN-GSQ-RCO-IQ3_S.basalt --local-dir models
 ```
 
-构建默认面向 sm_89，也支持 sm_86；`-DCMAKE_CUDA_ARCHITECTURES` 接受 `86`、`89` 或 `86;89`，其他值会被拒绝。下面结果所使用的工具链和测试调用方式记录在 [Ada 平台的执行与验证](docs/zh/precision/ada.md) 中，该页同时列出 Ampere 上仍未完成的工作。
+构建默认面向 sm_89，也支持 sm_86 和 sm_80；`-DCMAKE_CUDA_ARCHITECTURES` 接受 `80`、`86` 与 `89` 的任意组合，其他值会被拒绝。下面结果所使用的工具链和测试调用方式记录在 [Ada 平台的执行与验证](docs/zh/precision/ada.md) 中，该页同时列出 Ampere 上仍未完成的工作。
 
 二进制和文件格式的名称保持为 `basalt` 和 `.basalt`：这些 pack 仍然是 Basalt 读取的同一批文件，一个改名的分支会破坏所有现有模型。Adamant 是项目名，不是新格式。
 

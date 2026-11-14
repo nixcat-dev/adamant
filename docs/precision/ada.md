@@ -7,15 +7,28 @@ passes with CUDA 13.0.88, GCC 14.3.1, and warnings as errors. Runtime validation
 is incomplete; compilation does not establish numerical correctness. Upstream
 measurements in [qwen38-flash-next.md](qwen38-flash-next.md) and the pages beside it are not Adamant results.
 
-## Ampere (sm_86)
+## Ampere (sm_86 and sm_80)
 
-`include/basalt/cuda_target.hpp` accepts compute capability 8.6 alongside 8.9;
-`CMAKE_CUDA_ARCHITECTURES` takes `86`, `89` or `86;89` (default `89`), anything else is a
+`include/basalt/cuda_target.hpp` accepts compute capability 8.0 and 8.6 alongside 8.9;
+`CMAKE_CUDA_ARCHITECTURES` takes any combination of `80`, `86` and `89` (default `89`), anything else is a
 configure error. `gpu "auto"` selects every visible Ada or Ampere card; an explicit card of
 another capability stops the start. No kernel uses FP8 or FP4 tensor instructions (NVFP4 runs
-as integer MMQ), so no weight pack or KV format is excluded on 8.6 by design.
+as integer MMQ), so no weight pack or KV format is excluded on Ampere by design.
 
-Ampere is not yet validated. The sm_86 build compiles; still open on Ampere hardware:
+### sm_80 validation
+
+The Linux Release build was exercised on one NVIDIA A100-SXM4-80GB at its enforced 400 W
+power limit, with CUDA 13.0.88 and GCC 13.3.0. A clean build completed in 707.527 s. All 76
+CPU tests passed in 54.89 s; all 102 runnable GPU tests passed in 753.37 s. The two GPU skips
+were the single-GPU peer test and the model-dependent generation test; the latter passed when
+rerun with the downloaded pack. An end-to-end IQ3_S pack run loaded all 46.8 GiB of experts
+into VRAM with no spill and generated
+the `conv` fixture at 95.8 tok/s. This establishes the sm_80 build, kernel suite and generation
+path; the BF16 quality gate and multi-GPU paths remain open.
+
+### sm_86 status
+
+The sm_86 build compiles; still open on sm_86 hardware:
 
 - Kernel parity tests against the current and CPU reference kernels.
 - Decode-path PPL/KLD against the BF16 reference (`basalt-bench --quality`).

@@ -6,14 +6,26 @@ Adamant 的 Ada 实现尚处于开发早期。Linux sm_89 Release 构建已在 C
 和警告视为错误的条件下编译通过。运行时验证尚不完备；能编译并不能确立数值正确性。
 [qwen38-flash-next.md](qwen38-flash-next.md) 及与其并列的页面中的上游测量结果不是 Adamant 的结果。
 
-## Ampere（sm_86）
+## Ampere（sm_86 和 sm_80）
 
-`include/basalt/cuda_target.hpp` 在 8.9 之外接受 compute capability 8.6；`CMAKE_CUDA_ARCHITECTURES`
-接受 `86`、`89` 或 `86;89`（默认 `89`），其他值为配置错误。`gpu "auto"` 选择每一块可见的 Ada 或
+`include/basalt/cuda_target.hpp` 在 8.9 之外接受 compute capability 8.0 和 8.6；`CMAKE_CUDA_ARCHITECTURES`
+接受 `80`、`86` 与 `89` 的任意组合（默认 `89`），其他值为配置错误。`gpu "auto"` 选择每一块可见的 Ada 或
 Ampere 卡；显式指定的其他能力的卡会终止启动。任何 kernel 都不使用 FP8 或 FP4 tensor 指令
-（NVFP4 走整数 MMQ），因此按设计没有任何 weight pack 或 KV 格式在 8.6 上被排除。
+（NVFP4 走整数 MMQ），因此按设计没有任何 weight pack 或 KV 格式在 Ampere 上被排除。
 
-Ampere 尚未经过验证。sm_86 构建可以编译；Ampere 硬件上仍未完成的有：
+### sm_80 验证
+
+Linux Release 构建在一块 NVIDIA A100-SXM4-80GB 上测试，强制功耗上限为 400 W，
+工具链为 CUDA 13.0.88 和 GCC 13.3.0。一次干净构建用时 707.527 秒。76 项 CPU
+测试全部通过，用时 54.89 秒；102 项可运行 GPU 测试全部通过，用时 753.37 秒。
+两项 GPU 跳过分别是需要多卡的 peer 测试和需要模型的生成测试；后一项用下载的 pack 重跑后通过。端到端 IQ3_S
+pack 运行把 46.8 GiB 专家全部装入 VRAM，没有溢出，`conv` fixture 的生成速度为
+95.8 tok/s。这证明了 sm_80 的构建、kernel 测试套件和生成路径；BF16 质量门槛与多 GPU
+路径仍待完成。
+
+### sm_86 状态
+
+sm_86 构建可以编译；sm_86 硬件上仍未完成的有：
 
 - 对照当前与 CPU 参考 kernel 的一致性测试。
 - 针对 BF16 参考的 decode 路径 PPL/KLD（`basalt-bench --quality`）。
