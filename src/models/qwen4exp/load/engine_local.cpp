@@ -74,7 +74,7 @@ void drive_pool_split(void* user, const float* x_f, const int32_t* ids, int64_t 
 // primary fills past them and the peer, which takes what the primary does not hold, gets them first.  Returns the
 // pairs moved; `at` and `fill` get the ranks the log names.
 size_t peer_hot_share_order(std::vector<std::pair<int32_t, int32_t>>& profile, size_t& at, size_t& fill) {
-    const double f = 0.45;
+    const double f = kPeerHotShare;
     at = std::min(profile.size(), (size_t) 8700);
     fill = at;
     if (at == 0) return 0;

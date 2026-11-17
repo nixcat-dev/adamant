@@ -107,7 +107,8 @@ bool Verifier::dm_init(std::string& err) {
         ok = cudaMalloc((void**) &d->route_counts, 8 * 8) == cudaSuccess && cudaMemset(d->route_counts, 0, 8 * 8) == cudaSuccess;
     if (!ok) { err = "verify: device-planned MoE buffers"; return false; }
     d->rows_words = (size_t) (T * K * N);
-    d->tags = d->wstat == nullptr;
+    // With P2P VRAM rows, dm_wait_kernel avoids busy-polling m_rows across all combine threads.
+    d->tags = d->wstat == nullptr && !d->p2p_rows;
     d->shadow0.assign((size_t) LE, INT32_MIN);
     d->shadow1.assign((size_t) LE, -1);
     d->pin_stride = (size_t) LE * 24;   // [res0 | ptab0 | res1 | ptab1] per slot
@@ -144,8 +145,10 @@ bool Verifier::dm_init(std::string& err) {
              cudaMalloc(&d->pscr, dec_moe_peer_scratch_bytes((int) N, (int) lay.fmt[0].n_ff)) == cudaSuccess &&
              cudaMemset(d->pscr, 0, dec_moe_peer_scratch_bytes((int) N, (int) lay.fmt[0].n_ff)) == cudaSuccess &&
              cudaMalloc((void**) &d->parr, 64) == cudaSuccess;
-        d->tag = true;
-        if (!dm_fill_rows_tag(*d, device_)) { err = "verify: peer row tag init"; return false; }
+        if (!d->p2p_rows) {
+            d->tag = true;
+            if (!dm_fill_rows_tag(*d, device_)) { err = "verify: peer row tag init"; return false; }
+        }
         if (!ok) { err = "verify: device-planned MoE peer buffers"; return false; }
         d->shadow1.assign((size_t) LE, INT32_MIN);
         if (!router_ok || !warm_router(rq_h, rs_h, &d->rq, &d->rs))
