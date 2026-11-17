@@ -1,9 +1,10 @@
 // include/basalt/prefill/peer_share.hpp - multi-GPU: a second card's share of a prompt chunk's routed experts.
 //
-// Once a layer the main card writes the layer's activations in the products' format into mapped host memory (one small
-// kernel; the rest of its part is copies). The second card stages each group of experts (copies of their blobs from its
-// own slots or from pinned host memory over its own link, or the caller's own staging), runs each launch's products and
-// sends the result rows back, which the main card lays into one contiguous block of the caller's rows. Every call is
+// Once a layer the main card writes the layer's activations in the products' format directly to peer VRAM when P2P is
+// active, or otherwise into mapped host memory (one small kernel; the rest of its part is copies). The second card
+// stages each group of experts (copies of their blobs from its own slots or from pinned host memory over its own link,
+// or the caller's own staging), runs each launch's products and sends the result rows back directly via P2P or through
+// mapped host memory, which the main card lays into one contiguous block of the caller's rows. Every call is
 // asynchronous: the main card's own experts run while the second card works, and only `join` makes a main stream wait.
 // Model-agnostic: the formats, the blobs, the staging, the step between the two products and, for a family MMQ does not
 // run, the products themselves come from the caller.
@@ -55,7 +56,7 @@ public:
         const int32_t* bounds = nullptr;          ///< device: n + 1 row bounds, relative to the launch's first row
         const int32_t* bounds_host = nullptr;     ///< the same bounds on the host
         int64_t rows = 0, max_rows = 0;           ///< its rows, and the most one expert has
-        const void* act = nullptr;                ///< the layer's activations (mapped host memory)
+        const void* act = nullptr;                ///< the layer's activations (mapped host memory, or peer VRAM with P2P)
         int n_tokens = 0;
         bool first = false;                       ///< the layer's first launch
         float* out = nullptr;                     ///< rows x n_embd results
