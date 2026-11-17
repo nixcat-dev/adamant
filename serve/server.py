@@ -35,7 +35,7 @@ from serve.engine.vision import (EngineVision, Vision, check_gpu, child_env, eng
                                  gpu_text, gpus_in_play, model_plan, vision_card, vision_env, vision_item)
 from serve.models import dialect_for  # noqa: E402
 from serve.handler import Server, serve  # noqa: E402
-from serve.security import (LOOPBACK_NAMES, allowed_hosts_of, api_key_of, exposed_without_key,  # noqa: E402
+from serve.security import (LOOPBACK_NAMES, allowed_hosts_of, api_key_from_file, api_key_of, exposed_without_key,  # noqa: E402
                             lan_addresses, origins_of)
 from serve.router import Router  # noqa: E402
 from serve.service import Service  # noqa: E402
@@ -328,6 +328,15 @@ def main() -> int:
     if a.max_payload_mib < 1:
         fail(f"--max-payload-mib {a.max_payload_mib} must be at least 1")
     svc.max_payload = a.max_payload_mib << 20
+    if a.api_key_file:
+        if a.api_key:
+            print("[server] error: give --api-key or --api-key-file, not both", file=sys.stderr)
+            return 2
+        try:
+            a.api_key = api_key_from_file(a.api_key_file)
+        except ValueError as e:
+            print(f"[server] error: {e}", file=sys.stderr)
+            return 2
     try:
         svc.api_key = api_key_of(a.api_key)
     except ValueError as e:
