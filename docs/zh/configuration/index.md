@@ -60,6 +60,7 @@ bin/basalt serve MODEL.basalt [--python PY] [options]
 | `host` | server | 地址 | `127.0.0.1` | 监听地址。`0.0.0.0` 对外服务；绝不要不带 `api-key` 这样用。 |
 | `port` | server | 整数 | `8080` | TCP 端口。 |
 | `api-key` | 命令行 | 字符串 | 无 | 要求 `/v1/*` 带上这个 key（`Authorization: Bearer` 或 `x-api-key`）。仅命令行。 |
+| `api-key-file` | 命令行 | 路径 | 无 | 从这个文件的第一行读取该 key，使它不出现在进程列表里。不能与 `api-key` 同用。仅命令行。 |
 | `allowed-host` | server | 字符串，可重复 | 无 | 也回应这个 `Host` 名；`"*"` 关闭该检查。 |
 | `cors-origin` | server | 字符串，可重复 | 无 | 允许来自该来源的网页调用 `/v1/*`。 |
 | `fit-max-tokens` | 条目 | 开关 | 关闭 | 把 `max_tokens` 压到剩余上下文内，而不是回 400。 |
