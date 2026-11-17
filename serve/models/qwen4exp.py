@@ -10,6 +10,7 @@ class Qwen4Exp(Dialect):
     name = "qwen4exp"
     stop_texts = (IM_END, "<|endoftext|>")
     reasoning_close = "\n</think>\n\n"
+    reasoning_wrap_up = "\n\nI have thought about this long enough; time to give my answer.\n</think>\n\n"
     effort_turn = "<|im_start|>system\n{}<|im_end|>\n"
 
     def template(self, source):
