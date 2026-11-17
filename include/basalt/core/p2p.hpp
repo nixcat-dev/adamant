@@ -3,6 +3,7 @@
 
 #include "basalt/core/diag.hpp"
 #include "basalt/core/on_device.hpp"
+#include "basalt/core/vmm.hpp"
 
 #include <cuda_runtime.h>
 
@@ -46,6 +47,9 @@ inline bool enable_peer_access(int dev0, int dev1) {
         (void) cudaGetLastError();
         return false;
     }
+    // Virtual memory allocations mapped before or after P2P setup need explicit peer access via cuMemSetAccess.
+    vmm::allow_peer(dev0, dev1);
+    vmm::allow_peer(dev1, dev0);
     return true;
 }
 
