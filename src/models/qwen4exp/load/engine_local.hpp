@@ -199,6 +199,9 @@ void drive_pool_multi(void* user, const float* x_f, const int32_t* ids, int64_t 
 void drive_pool_split(void* user, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k, float* out,
                       int64_t layer);
 
+// Fraction of hot pairs routed to the peer expert tier when its memory bandwidth matches CUDA0.
+constexpr double kPeerHotShare = 0.20;
+
 // Shares the hottest profile pairs between the main and peer expert tiers.
 size_t peer_hot_share_order(std::vector<std::pair<int32_t, int32_t>>& profile, size_t& at, size_t& fill);
 

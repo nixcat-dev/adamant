@@ -5,6 +5,7 @@
 #include "basalt/models/qwen4exp/decode/verify.hpp"
 #include "basalt/platform/compiler.hpp"
 #include "basalt/core/peer_experts.hpp"
+#include "basalt/core/on_device.hpp"
 #include "basalt/kernels/iq_kernels.hpp"
 #include "basalt/models/qwen4exp/kernels/dec_moe.hpp"
 #include <vector>
@@ -46,6 +47,8 @@ struct DecMoe {
     float* h_rows = nullptr; float* m_rows = nullptr;
     bool tag = false;       ///< the combine polls the peer's rows (each dword not yet written holds the tag word)
     bool tags = false;      ///< the combine waits for the CPU pool's word itself: no wait launch (without --wait-stats)
+    bool p2p_rows = false;  ///< rows buffer allocated in CUDA0 VRAM via P2P instead of mapped host RAM
+    bool p2p_xq = false;    ///< q8_1 ring inputs allocated in CUDA0 VRAM via P2P instead of mapped host RAM
     size_t rows_words = 0;
     bool tag_dirty = false; ///< a released window may have left written rows behind
     size_t x_stride = 0, xq_stride = 0;      ///< per ring, floats / bytes
@@ -101,5 +104,19 @@ struct DecMoe {
     static constexpr int kPinSlots = 8;
     std::vector<uint32_t> put_i;             ///< dm_sync: the peer entries that changed
 };
+
+/// Initialize the peer row buffer with the unwritten-tag sentinel word.
+inline bool dm_fill_rows_tag(DecMoe& d, int device) {
+    const uint32_t tag = basalt::kernels::dec_moe_tag_word();
+    if (d.p2p_rows) {
+        const OnDevice on(device);
+        std::vector<uint32_t> tmp(d.rows_words, tag);
+        // cudaMemcpy from pageable host memory runs on cudaStreamLegacy; synchronize so non-blocking streams observe it.
+        return cudaMemcpy(d.m_rows, tmp.data(), d.rows_words * 4, cudaMemcpyHostToDevice) == cudaSuccess &&
+               cudaStreamSynchronize(nullptr) == cudaSuccess;
+    }
+    for (size_t i = 0; i < d.rows_words; ++i) ((volatile uint32_t*) d.h_rows)[i] = tag;
+    return true;
+}
 
 }  // namespace basalt::core

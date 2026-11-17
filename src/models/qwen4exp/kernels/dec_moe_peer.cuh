@@ -17,8 +17,9 @@ union DmPeerShared {
 // the window (a record in diag_m, done_m past every ring) and the kernel exits.
 // Q2: Q2_0 gate/up rows two a warp as well (a build of its own, so the other formats' kernel stays as it was)
 // MIX: the GDN mixer split's item (a build of its own, so the window without the split keeps its kernel)
+// Two blocks an SM keeps the same register budget per thread for gu2 and down as dm_glue_gu_kernel.
 template<bool Q2, bool MIX>
-__global__ void __launch_bounds__(kDmThreads, 4) dm_peer_kernel(DmPeerArgs a) {
+__global__ void __launch_bounds__(kDmThreads, 2) dm_peer_kernel(DmPeerArgs a) {
     __shared__ DmPeerShared su;
     DmShared& sm = su.d;
     __shared__ uint32_t s_seq;

@@ -182,10 +182,11 @@ int model(Context& context) {
         if (o.peer_device >= 1 && !slow_peer) {   // the peer's share of the hot pairs
             size_t at = 0, fill = 0;
             const size_t n_moved = peer_hot_share_order(profile, at, fill);
-            peer_hot_share = true;
+            peer_hot_share = n_moved > 0;
             if (at > 0)
                 basalt::log::info("basalt generate", "peer hot share %.2f: %zu of the first %zu ranked pairs moved "
-                                     "behind rank %zu (the peer's)", 0.45, n_moved, at, fill);
+                                     "behind rank %zu (the peer's)",
+                                  basalt::models::qwen4exp::engine_local::kPeerHotShare, n_moved, at, fill);
         }
         basalt::log::info("basalt generate", "profile %s: %zu ranked pairs, built for %lld slots",
                      o.expert_profile.c_str(), profile.size(), (long long) pslots);
