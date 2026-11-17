@@ -42,9 +42,6 @@ Binary: **CLI** = `bin/basalt` one-shot (`--tokens IDS`), **serve** = `--serve` 
 | `--spec-oracle FILE` | CLI | With `--spec N` on a pack without a drafter: draft from an expected continuation. The verify exactness test. |
 | `--prefill-until P` | CLI | Batch the first P prompt positions; run the rest teacher-forced. |
 | `--spec-corrupt N` | CLI | Replace every Nth draft with a wrong token, to test rejection. |
-| `--diag-teacher` | CLI | With `--spec-oracle`: teacher-forces the file's tokens and counts differing picks. |
-| `--diag-tier-frozen` | CLI, serve | Fixed placement: the VRAM tier keeps what it holds, with no copies or promotion. |
-| `--diag-drafter-gpu DEV` | CLI, serve | The card the drafter runs on. |
 | `--force-zero-doorbell` | serve | Scheduling test on a card that cannot hold every expert. The output is wrong by design. |
 
 ## Experts and n-gram table

@@ -42,9 +42,6 @@
 | `--spec-oracle FILE` | CLI | pack 没有 drafter 时配合 `--spec N`：从预期的续写生成 draft。校验精确性测试。 |
 | `--prefill-until P` | CLI | 把前 P 个提示词位置按批处理；其余以 teacher-forced 方式运行。 |
 | `--spec-corrupt N` | CLI | 把每第 N 个 draft 换成错误的 token，用于测试拒绝。 |
-| `--diag-teacher` | CLI | 配合 `--spec-oracle`：teacher-force 文件里的 token 并统计不同的选择。 |
-| `--diag-tier-frozen` | CLI, serve | 固定放置：VRAM 层保持它持有的东西，不做搬运或提升。 |
-| `--diag-drafter-gpu DEV` | CLI, serve | drafter 运行在哪张卡上。 |
 | `--force-zero-doorbell` | serve | 在装不下每个专家的卡上做调度测试。输出按设计就是错的。 |
 
 ## 专家与 n-gram 表
