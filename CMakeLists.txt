@@ -250,7 +250,7 @@ target_link_libraries(basalt-plan PRIVATE plan)
 
 # ---- core (GPU runtime) ---------------------------------------------
 add_library(core STATIC src/core/device.cu src/core/pinned.cu src/core/ram_load.cpp src/core/graph.cpp src/core/weights.cpp src/core/direct_upload.cpp
-                             src/core/host_plan.cpp)
+                             src/core/host_plan.cpp src/core/vmm.cpp)
 target_include_directories(core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 # The selected runtime is PUBLIC because graph.cpp is a HOST translation unit that calls cudaGraphLaunch and
 # cudaEventQuery: the .cu sources get cudart through the CUDA language rules, a .cpp does not, and the
@@ -320,7 +320,7 @@ set_source_files_properties(src/kernels/cuda/native_mmvq.cu src/kernels/cuda/nat
 # library is the honest shape of the dependency graph: core knows about devices and weights, kernels know
 # about arithmetic, and this one knows the ORDER the arithmetic happens in.
 # ---- tiers: the storage and transfer tier shared by the models (VRAM slots, RAM and file source, peer card) ----
-add_library(tiers STATIC src/core/expert_source.cpp src/core/expert_cache.cpp src/core/vmm.cpp src/core/peer_experts.cpp src/core/conversation_store.cpp src/core/conversation_memory.cpp)
+add_library(tiers STATIC src/core/expert_source.cpp src/core/expert_cache.cpp src/core/peer_experts.cpp src/core/conversation_store.cpp src/core/conversation_memory.cpp)
 target_include_directories(tiers PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(tiers PUBLIC core kernels kernels_cpu ${_gpu_runtime_target})
 include(src/models/qwen4exp/qwen4exp.cmake)

@@ -22,5 +22,7 @@ void release_range(uint8_t* va, uint64_t bytes);
 unsigned long long map(uint8_t* va, uint64_t bytes);
 /// Unmaps what `map` mapped there and frees its physical memory.  The caller has made sure no work reads it.
 bool unmap(uint8_t* va, uint64_t bytes, unsigned long long handle);
+/// Grants `peer` read/write access to existing and future physical allocations mapped on `dev`.
+void allow_peer(int dev, int peer);
 
 }  // namespace basalt::core::vmm
