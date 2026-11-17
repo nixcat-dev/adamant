@@ -1,22 +1,24 @@
 // src/prefill/peer_share.cpp - multi-GPU: a second card's share of a prompt chunk's routed experts.
 //
-// Per layer the main card quantizes the activations into mapped host memory. A layer's experts are staged in groups of
-// at most launch_experts, a new one also where the caller starts one (group i in staging buffer i % stage_bufs), each group's
-// rows run in launches of at most launch_rows rows (launch j in buffer set j % bufs), and four streams carry them:
+// Per layer the main card quantizes the activations directly into peer VRAM when P2P is active (otherwise into mapped
+// host memory). A layer's experts are staged in groups of at most launch_experts, a new one also where the caller starts
+// one (group i in staging buffer i % stage_bufs), each group's rows run in launches of at most launch_rows rows
+// (launch j in buffer set j % bufs), and four streams carry them:
 //   stage    (second card): a group's blobs into its staging buffer (copies device-to-device or over its own link, or
 //                           the caller's staging); the first groups of a layer whose experts are known early start before
 //                           its routing (`prepare`);
-//   products (second card): gather the launch's rows out of mapped host memory, gate/up, the caller's step, down (or the
-//                           caller's products);
-//   out      (second card): copy the result rows into mapped host memory;
-//   rows     (main card):   a kernel on a high-priority stream reads them into the caller's block. Neither the activations
-//                           nor the rows queue behind the expert copies on a copy engine.
+//   products (second card): gather the launch's rows out of peer VRAM or mapped host memory, gate/up, the caller's step,
+//                           down (or the caller's products);
+//   out      (second card): copy the result rows directly to `dst` via P2P, or into mapped host memory;
+//   rows     (main card):   reads mapped host rows into the caller's block (without P2P), or synchronizes completion.
+//                           Neither the activations nor the rows queue behind the expert copies on a copy engine.
 // Events order the reuse of each buffer, so no host thread waits; the host's per-layer tables alternate between two sets,
 // which the caller's next-but-one layer may rewrite only after `join` (each layer starts after the main card's stream
 // reached it).
 #include "basalt/prefill/peer_share.hpp"
 
 #include "basalt/core/on_device.hpp"
+#include "basalt/core/p2p.hpp"
 #include "basalt/kernels/elementwise.hpp"
 #include "basalt/prefill/moe_mmq.hpp"
 
@@ -54,8 +56,10 @@ std::vector<std::pair<size_t, size_t>> cut_groups(const std::vector<PeerShare::E
 
 struct PeerShare::Impl {
     int main = -1, peer = -1;
+    bool p2p = false;
     Dims d;
     std::vector<void*> dev_peer, host;
+    void* pxq = nullptr;                    // second card: P2P q8_1 activations (when p2p is active)
     // main card
     cudaStream_t s_main = nullptr, s_rows = nullptr;
     cudaEvent_t ev_x = nullptr, ev_xq = nullptr, ev_end = nullptr, ev_rows[kMaxBufs] = {};
@@ -219,14 +223,14 @@ PeerShare::~PeerShare() = default;
 
 // The buffers in one place, so that the sizes `open` takes and the ones the plans count are the same.
 template <class Peer, class Host>
-static void layout(const PeerShare::Dims& d, Peer&& peer, Host&& host) {
+static void layout(const PeerShare::Dims& d, Peer&& peer, Host&& host, bool p2p_out = false) {
     const int64_t R = d.launch_rows, G = max_launches(d);
     host(d.act_bytes);                                               // hxq
     for (int b = 0; b < d.stage_bufs; ++b) peer(d.group_bytes);     // stage
     for (int b = 0; b < d.bufs; ++b) {
         peer(mmq::q8_bytes(R, d.n_embd));                            // xq
         peer((size_t) R * (size_t) d.n_embd * 4);                    // out
-        host((size_t) R * (size_t) d.n_embd * 4);                    // hrows
+        if (!p2p_out) host((size_t) R * (size_t) d.n_embd * 4);      // hrows
     }
     peer((size_t) R * (size_t) d.n_ff * 2 * 4);                      // gu
     peer((size_t) R * (size_t) d.n_ff * 4);                          // h
@@ -243,6 +247,7 @@ static void layout(const PeerShare::Dims& d, Peer&& peer, Host&& host) {
 uint64_t PeerShare::peer_bytes(const Dims& d) {
     uint64_t sum = 0;
     layout(d, [&](size_t b) { sum += (b + 255) / 256 * 256; }, [](size_t) {});
+    if (d.act_bytes > 0) sum += (d.act_bytes + 255) / 256 * 256;   // pxq when P2P is active
     return sum;
 }
 
@@ -259,6 +264,7 @@ bool PeerShare::open(int main_device, int peer_device, const Dims& d, std::strin
     }
     auto m = std::make_unique<Impl>();
     m->d = d;
+    m->p2p = core::enable_peer_access(main_device, peer_device);
     bool ok = true;
     std::vector<void*> pv, hv;
     {
@@ -269,6 +275,14 @@ bool PeerShare::open(int main_device, int peer_device, const Dims& d, std::strin
             if (ok && cudaMalloc(&p, b) == cudaSuccess) pv.push_back(p), m->dev_peer.push_back(p);
             else ok = false;
         }, [](size_t) {});
+        if (ok && m->p2p && d.act_bytes > 0) {
+            if (cudaMalloc(&m->pxq, d.act_bytes) == cudaSuccess) {
+                m->dev_peer.push_back(m->pxq);
+            } else {
+                (void) cudaGetLastError();
+                m->pxq = nullptr;
+            }
+        }
         ok = ok && cudaStreamCreateWithFlags(&m->s_stage, cudaStreamNonBlocking) == cudaSuccess &&
              cudaStreamCreateWithFlags(&m->s_prod, cudaStreamNonBlocking) == cudaSuccess &&
              cudaStreamCreateWithFlags(&m->s_out, cudaStreamNonBlocking) == cudaSuccess &&
@@ -311,11 +325,11 @@ bool PeerShare::open(int main_device, int peer_device, const Dims& d, std::strin
             if (ok && cudaHostAlloc(&p, b, cudaHostAllocPortable | cudaHostAllocMapped) == cudaSuccess)
                 hv.push_back(p), m->host.push_back(p);
             else ok = false;
-        });
+        }, m->p2p);
         if (ok) {
             size_t i = 0;
             m->hxq = hv[i++];
-            for (int b = 0; b < d.bufs; ++b) m->hrows[b] = (float*) hv[i++];
+            for (int b = 0; b < d.bufs; ++b) m->hrows[b] = m->p2p ? nullptr : (float*) hv[i++];
             for (int s = 0; s < 2; ++s) {
                 m->tok_h[s] = (int32_t*) hv[i++];
                 m->bounds_h[s] = (int32_t*) hv[i++];
@@ -433,6 +447,7 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
         cudaStreamWaitEvent(m.s_main, m.ev_x, 0);
         cudaStreamWaitEvent(m.s_rows, m.ev_x, 0);
         cudaStreamWaitEvent(m.s_main, m.ev_xin, 0);
+        const bool p2p_act = m.p2p && m.pxq != nullptr && !L.quantize;
         if (L.quantize) {
             L.quantize(x, n_tokens, m.hxq, m.s_main);
         } else {   // block column kb of row r lies at (kb n_tokens + r) blocks: a piece's rows are a strided copy
@@ -442,11 +457,19 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
                 const int64_t nr = std::min<int64_t>(kQuantRows, n_tokens - r0);
                 mmq::quantize(x + (size_t) r0 * (size_t) d.n_embd, nullptr, m.dxq, L.gu_type, d.n_embd, d.n_embd, nr,
                               m.s_main);
-                cudaMemcpy2DAsync((uint8_t*) m.hxq + (size_t) r0 * bb, (size_t) n_tokens * bb, m.dxq, (size_t) nr * bb,
-                                  (size_t) nr * bb, kb, cudaMemcpyDeviceToHost, m.s_main);
+                if (p2p_act)
+                    cudaMemcpy2DAsync((uint8_t*) m.pxq + (size_t) r0 * bb, (size_t) n_tokens * bb, m.dxq,
+                                      (size_t) nr * bb, (size_t) nr * bb, kb, cudaMemcpyDefault, m.s_main);
+                else
+                    cudaMemcpy2DAsync((uint8_t*) m.hxq + (size_t) r0 * bb, (size_t) n_tokens * bb, m.dxq, (size_t) nr * bb,
+                                      (size_t) nr * bb, kb, cudaMemcpyDeviceToHost, m.s_main);
             }
         }
         cudaEventRecord(m.ev_xq, m.s_main);
+        if (const cudaError_t e = cudaGetLastError(); e != cudaSuccess) {
+            err = std::string("peer share: ") + cudaGetErrorString(e);
+            return false;
+        }
     }
     // the group numbers: the prepared ones, then new ones
     std::vector<uint64_t> nums;
@@ -458,8 +481,9 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
         if ((int) gi >= prepared)
             for (size_t i = groups[gi].i0; i < groups[gi].i1; ++i) blobs[gi].emplace_back(experts[i].blob, experts[i].on_peer);
     }
+    const bool p2p_act = m.p2p && m.pxq != nullptr && !L.quantize;
     Impl* w = &m;
-    m.post([w, L, n_tokens, dst, r, nb, tok, bounds, prepared, groups = std::move(groups), nums = std::move(nums),
+    m.post([w, L, p2p_act, n_tokens, dst, r, nb, tok, bounds, prepared, groups = std::move(groups), nums = std::move(nums),
             blobs = std::move(blobs), all_blobs = std::move(all_blobs)] {
         Impl& m = *w;
         const Dims& d = m.d;
@@ -489,7 +513,7 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
                 lv.bounds_host = bounds + l.b0;
                 lv.rows = l.rows;
                 lv.max_rows = l.max_rows;
-                lv.act = m.hxq;
+                lv.act = p2p_act ? m.pxq : m.hxq;
                 lv.n_tokens = n_tokens;
                 lv.first = first;
                 lv.out = m.out[b];
@@ -504,13 +528,20 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
                 // the rows out, once the main card has copied the last ones from there
                 const size_t bytes = (size_t) l.rows * (size_t) d.n_embd * 4;
                 cudaStreamWaitEvent(so, m.ev_done[b], 0);
-                cudaStreamWaitEvent(so, m.ev_rows[b], 0);
-                cudaMemcpyAsync(m.hrows[b], m.out[b], bytes, cudaMemcpyDeviceToHost, so);
-                cudaEventRecord(m.ev_out[b], so);
-                const core::OnDevice om(m.main);
-                cudaStreamWaitEvent(mr, m.ev_out[b], 0);
-                kernels::copy_from_mapped(dst + (size_t) l.r0 * (size_t) d.n_embd, m.hrows[b], (int64_t) (bytes / 4), mr);
-                cudaEventRecord(m.ev_rows[b], mr);
+                if (m.p2p) {
+                    cudaMemcpyPeerAsync(dst + (size_t) l.r0 * (size_t) d.n_embd, m.main, m.out[b], m.peer, bytes, so);
+                    cudaEventRecord(m.ev_out[b], so);
+                    const core::OnDevice om(m.main);
+                    cudaStreamWaitEvent(mr, m.ev_out[b], 0);
+                } else {
+                    cudaStreamWaitEvent(so, m.ev_rows[b], 0);
+                    cudaMemcpyAsync(m.hrows[b], m.out[b], bytes, cudaMemcpyDeviceToHost, so);
+                    cudaEventRecord(m.ev_out[b], so);
+                    const core::OnDevice om(m.main);
+                    cudaStreamWaitEvent(mr, m.ev_out[b], 0);
+                    kernels::copy_from_mapped(dst + (size_t) l.r0 * (size_t) d.n_embd, m.hrows[b], (int64_t) (bytes / 4), mr);
+                    cudaEventRecord(m.ev_rows[b], mr);
+                }
             }
             // the staging buffer is free once the group's products are done (or at once, without rows)
             if (g.launches.empty()) cudaEventRecord(m.ev_free[sb], m.s_stage);
@@ -522,7 +553,8 @@ bool PeerShare::run(const Layer& L, const float* x, int n_tokens, const std::vec
         }
         const core::OnDevice od(m.main);
         cudaEventRecord(m.ev_end, mr);
-        m.err = cudaGetLastError();
+        const cudaError_t e = cudaGetLastError();
+        if (m.err == cudaSuccess && e != cudaSuccess) m.err = e;
     });
     return true;
 }

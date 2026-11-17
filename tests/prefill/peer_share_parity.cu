@@ -24,7 +24,7 @@
 namespace {
 namespace mmq = basalt::prefill::mmq;
 
-constexpr int N = 4096, FF = 2048, K = 6, E = 48, T = 2048;
+constexpr int N = 4096, FF = 2048, K = 6, E = 48, T = 2112;
 constexpr ggml_type kGu = GGML_TYPE_Q2_K, kDown = GGML_TYPE_Q3_K;
 
 void ck(cudaError_t e, const char* what) {

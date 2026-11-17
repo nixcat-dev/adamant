@@ -1,6 +1,7 @@
 // src/core/peer_experts.cpp - see include/basalt/core/peer_experts.hpp.
 #include "basalt/core/load_progress.hpp"
 #include "basalt/core/peer_experts.hpp"
+#include "basalt/core/p2p.hpp"
 
 #include "basalt/kernels/cpu/expert_layout.hpp"
 #include "basalt/kernels/elementwise.hpp"
@@ -153,6 +154,7 @@ bool PeerExperts::prepare(int device, ExpertSource& src, int64_t n_layers, int64
     hold_.assign((size_t) (n_layers * n_expert), 0);
     On on(device);
     device_ = device;
+    (void) enable_peer_access(0, device);
     // scratch first, so the slots take what is really left
     const size_t scratch = scratch_bytes(n_ff);
     const bool alloc_ok =
@@ -182,6 +184,7 @@ bool PeerExperts::open_plain(int device, int64_t n_layers, int64_t n_expert, int
     hold_.assign((size_t) (n_layers * n_expert), 0);
     On on(device);
     device_ = device;
+    (void) enable_peer_access(0, device);
     const size_t row_bytes = (size_t) n_embd * sizeof(float);
     const bool ok =
         ck(cudaStreamCreateWithFlags(&stream_, cudaStreamNonBlocking), "stream", err) &&

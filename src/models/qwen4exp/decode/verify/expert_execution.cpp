@@ -26,8 +26,10 @@ bool Verifier::dm_begin(std::string& err, DecodeGaps* gm) {
     *(volatile uint32_t*) (dm_->h_w + 52) = 0;
     *(volatile uint32_t*) (dm_->h_w + 60) = 0;
     if (dm_->tag && dm_->tag_dirty) {   // a released window left rows written: back to unwritten
-        for (size_t i = 0; i < dm_->rows_words; ++i)
-            ((volatile uint32_t*) dm_->h_rows)[i] = basalt::kernels::dec_moe_tag_word();
+        if (!dm_fill_rows_tag(*dm_, device_)) {
+            err = "verify: peer row tag reset";
+            return false;
+        }
         std::atomic_thread_fence(std::memory_order_seq_cst);
         dm_->tag_dirty = false;
     }
@@ -35,8 +37,8 @@ bool Verifier::dm_begin(std::string& err, DecodeGaps* gm) {
     if (dm_->pdev >= 0) {
         const OnDevice on(dm_->pdev);
         basalt::kernels::DmPeerArgs pa;
-        pa.rings_m = dm_->h_ring; pa.xq_m = dm_->h_xq; pa.xq_stride = dm_->xq_stride;
-        pa.seq_m = dm_->h_w + 0; pa.done_m = dm_->h_w + 16; pa.rows_m = dm_->h_rows;
+        pa.rings_m = dm_->h_ring; pa.xq_m = dm_->p2p_xq ? dm_->m_xq : dm_->h_xq; pa.xq_stride = dm_->xq_stride;
+        pa.seq_m = dm_->h_w + 0; pa.done_m = dm_->h_w + 16; pa.rows_m = dm_->p2p_rows ? dm_->m_rows : dm_->h_rows;
         pa.ptr = dm_->ptab; pa.lay = dm_->lay; pa.n_expert = (int) g_->n_expert; pa.k = (int) ss_->k;
         pa.n_embd = (int) g_->n_embd; pa.n_ff = (int) basalt::kernels::cpu::expert_layout().fmt[0].n_ff;
         pa.steps = (int) dm_->rings; pa.scratch = dm_->pscr; pa.arrive = dm_->parr; pa.diag_m = dm_->h_w + 32;

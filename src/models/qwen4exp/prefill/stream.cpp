@@ -3,6 +3,7 @@
 #include "basalt/models/qwen4exp/decode/mtp.hpp"
 #include "basalt/core/progress.hpp"
 #include "basalt/core/on_device.hpp"
+#include "basalt/core/p2p.hpp"
 #include "basalt/kernels/cpu/expert_layout.hpp"
 #include "basalt/models/qwen4exp/geometry.hpp"
 #include "basalt/models/qwen4exp/decode/native_head.hpp"
@@ -52,7 +53,8 @@ bool Prefill::Run::Chunk::start_stream() {
         m.stager->start(std::move(js));
     }
     chunk_stager_done.st = stream_all ? m.stager.get() : nullptr;
-    peer_async = remote_device >= 0 && m.peer_stage.setup(remote_device, (size_t) MAXBLOB());
+    const bool peer_p2p = remote_device >= 0 && core::enable_peer_access(m.device, remote_device);
+    peer_async = remote_device >= 0 && !peer_p2p && m.peer_stage.setup(remote_device, (size_t) MAXBLOB());
     if (threaded_issue) {
         issuer = std::thread([this] {
             const core::OnDevice od(m.device);

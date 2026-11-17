@@ -6,6 +6,7 @@
 #include "basalt/models/qwen4exp/decode/native_head.hpp"
 #include "basalt/models/qwen4exp/decode/gdn_head_split.hpp"
 #include "basalt/core/on_device.hpp"
+#include "basalt/core/p2p.hpp"
 #include "basalt/platform/compiler.hpp"
 #include "basalt/core/peer_experts.hpp"
 #include "basalt/kernels/iq_kernels.hpp"
@@ -54,6 +55,17 @@ bool Verifier::dm_init(std::string& err) {
     d->rings = le_ - lb_;
     d->x_stride = (size_t) (T * N);
     d->xq_stride = (size_t) (T * (N / 32) * 36);
+    const int peer_dev = (peer_ != nullptr && peer_->valid()) ? peer_->device() : -1;
+    bool has_xpeers = false;
+    for (PeerExperts* xpe : xpeers_)
+        if (xpe != nullptr && xpe->valid()) { has_xpeers = true; break; }
+    const bool cpu_warm = warm_pool_ != nullptr && warm_src_ != nullptr && K <= 16 &&
+                          std::all_of(lay.fmt.begin(), lay.fmt.end(), [&](const basalt::kernels::cpu::NativeFmt& f) {
+                              return f.bytes == lay.fmt[0].bytes && f.down_off == lay.fmt[0].down_off;
+                          });
+    const bool p2p = peer_dev >= 0 && !has_xpeers && enable_peer_access(device_, peer_dev);
+    d->p2p_rows = p2p;
+    d->p2p_xq = p2p && !cpu_warm;
     bool ok = cudaMalloc((void**) &d->res0, (size_t) LE * 4) == cudaSuccess &&
               cudaMalloc((void**) &d->res1, (size_t) LE * 4) == cudaSuccess &&
               cudaMalloc((void**) &d->plan, sizeof(DmPlan)) == cudaSuccess &&
@@ -61,9 +73,13 @@ bool Verifier::dm_init(std::string& err) {
               cudaMemset(d->res1, 0xff, (size_t) LE * 4) == cudaSuccess &&
               mapped((size_t) d->rings * sizeof(DmRing), (void**) &d->h_ring, (void**) &d->m_ring) &&
               mapped((size_t) d->rings * d->x_stride * 4, (void**) &d->h_x, (void**) &d->m_x) &&
-              mapped((size_t) d->rings * d->xq_stride, (void**) &d->h_xq, (void**) &d->m_xq) &&
+              (d->p2p_xq
+                   ? cudaMalloc((void**) &d->m_xq, (size_t) d->rings * d->xq_stride) == cudaSuccess
+                   : mapped((size_t) d->rings * d->xq_stride, (void**) &d->h_xq, (void**) &d->m_xq)) &&
               mapped(256, (void**) &d->h_w, (void**) &d->m_w) &&
-              mapped((size_t) (T * K * N) * 4, (void**) &d->h_rows, (void**) &d->m_rows) &&
+              (d->p2p_rows
+                   ? cudaMalloc((void**) &d->m_rows, (size_t) (T * K * N) * 4) == cudaSuccess
+                   : mapped((size_t) (T * K * N) * 4, (void**) &d->h_rows, (void**) &d->m_rows)) &&
               cudaMalloc(&d->vscr, dec_moe_vram_scratch_bytes((int) lay.fmt[0].n_ff)) == cudaSuccess &&
               cudaMalloc((void**) &d->vsync, (kDmCap + 1) * 4) == cudaSuccess &&
               cudaMemset(d->vsync, 0, (kDmCap + 1) * 4) == cudaSuccess &&
@@ -100,10 +116,6 @@ bool Verifier::dm_init(std::string& err) {
         d->pin = nullptr;
     }
     // the warm-ups' predictors, quantized once: every layer's router in int8 for the peer's, in 4-bit for the CPU pool's
-    const bool cpu_warm = warm_pool_ != nullptr && warm_src_ != nullptr && K <= 16 &&
-                          std::all_of(lay.fmt.begin(), lay.fmt.end(), [&](const basalt::kernels::cpu::NativeFmt& f) {
-                              return f.bytes == lay.fmt[0].bytes && f.down_off == lay.fmt[0].down_off;
-                          });
     std::vector<int8_t> rq_h;
     std::vector<float> rs_h;
     std::vector<uint8_t> rq4_h;
@@ -133,7 +145,7 @@ bool Verifier::dm_init(std::string& err) {
              cudaMemset(d->pscr, 0, dec_moe_peer_scratch_bytes((int) N, (int) lay.fmt[0].n_ff)) == cudaSuccess &&
              cudaMalloc((void**) &d->parr, 64) == cudaSuccess;
         d->tag = true;
-        for (size_t i = 0; i < d->rows_words; ++i) ((volatile uint32_t*) d->h_rows)[i] = basalt::kernels::dec_moe_tag_word();
+        if (!dm_fill_rows_tag(*d, device_)) { err = "verify: peer row tag init"; return false; }
         if (!ok) { err = "verify: device-planned MoE peer buffers"; return false; }
         d->shadow1.assign((size_t) LE, INT32_MIN);
         if (!router_ok || !warm_router(rq_h, rs_h, &d->rq, &d->rs))
@@ -243,6 +255,9 @@ bool Verifier::dm_init(std::string& err) {
         served += ")";
     }
     basalt::log::info("basalt verify", "the MoE tail planned on the device%s", served.c_str());
+    if (d->p2p_rows || d->p2p_xq)
+        basalt::log::info("basalt verify", "peer P2P enabled CUDA%d <-> CUDA%d (rows=%s, xq=%s)", device_, d->pdev,
+                          d->p2p_rows ? "vram" : "host", d->p2p_xq ? "vram" : "host");
     if (d->warm != nullptr)
         basalt::log::info("basalt verify", "the CPU pool warms its likeliest next-layer expert between doorbells");
     return true;
@@ -285,7 +300,10 @@ void Verifier::dm_free() {
     if (d->stage_host) cudaFreeHost(d->stage_host);
     if (d->pin) cudaFreeHost(d->pin);
     if (d->landed_pin) cudaFreeHost(d->landed_pin);
-    for (void* h : {(void*) d->h_ring, (void*) d->h_x, (void*) d->h_xq, (void*) d->h_w, (void*) d->h_rows})
+    if (d->p2p_rows && d->m_rows) { const OnDevice on0(device_); cudaFree(d->m_rows); }
+    if (d->p2p_xq && d->m_xq) { const OnDevice on0(device_); cudaFree(d->m_xq); }
+    for (void* h : {(void*) d->h_ring, (void*) d->h_x, d->p2p_xq ? nullptr : (void*) d->h_xq, (void*) d->h_w,
+                    d->p2p_rows ? nullptr : (void*) d->h_rows})
         if (h) cudaFreeHost(h);
     delete d;
     dm_ = nullptr;
