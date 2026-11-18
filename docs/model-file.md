@@ -53,3 +53,16 @@ python3 tools/convert/convert.py --sections-from Qwen3.8-FN-UD-Q4_K_XL.basalt --
 
 `--mtp-dense FILE` (the `mtp/dense` bytes of an official NVFP4, UD-IQ1_M, UD-IQ2_XS or UD-IQ3_XXS pack) swaps in a tuned drafter layer; the converter
 records it in `meta.mtp.dense`. Output is about 122 GiB (123 GiB for the 8-bit variant). The base's vocabulary must be NVIDIA's.
+
+## FP4-Local checkpoints
+
+`--checkpoint` also reads Model Optimizer's FP4-Local layout, as in
+[nvidia/Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local): the shards sit in `tensors/`,
+the routed experts' scales are CSF stream pairs (`weight_scale.nvfp4_csf_fixed`, `weight_scale.nvfp4_csf_exceptions`), the
+projections are MXFP8 and the n-gram table is NVFP4. The commands above take that folder as `--checkpoint`.
+
+- **Experts:** each CSF pair decodes to the UE4M3 scales bit for bit; codes and scales then move as in the NVFP4 pack.
+- **Projections:** MXFP8 values (E4M3 codes, one E8M0 scale per 32) widen to f32 exactly, then take the BF16 path: Q6_K or
+  Q8_0, or BF16 where the engine reads BF16.
+- **N-gram table:** E2M1 code × UE4M3 block scale × `weight_scale_2`, stored as Q8_0 (one rounding).
+- **Drafter and vision:** copied from the base pack, as for the NVFP4 pack.

@@ -596,6 +596,10 @@ class PleFp8:
         self.rows = sum(r for _, r in shards)
         self.row_bytes = PLE_DIM // 32 * 34
         self.nbytes = self.rows * self.row_bytes
+        self.files = [pathlib.Path(path)]
+        self.conversion = {"src_type": "F8_E4M3", "dst_type": "Q8_0",
+                           "method": "fp8 code x per-tensor BF16 scale, Q8_0 blocks of 32 (ggml reference rounding)",
+                           "scale": self.scale}
 
     def jobs(self):
         for off, rows in self.shards:
