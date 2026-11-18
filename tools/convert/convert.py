@@ -828,7 +828,7 @@ def main():
         requant_dense(a)
         return
     if a.sections_from and a.checkpoint:
-        if a.gguf or a.mmproj or a.mtp_source or a.draft_vocab or a.mtp_dense_index or a.mtp_dense_sha256:
+        if a.gguf or a.mmproj or a.mtp_source or a.draft_vocab or a.mtp_dense_index or a.mtp_dense_sha256 or a.dry_run:
             ap.error("--checkpoint with --sections-from takes only --out, --name, --mtp-dense, --dense-q8-0, --workers and --force")
         if not Path(a.checkpoint).is_dir():
             ap.error(f"missing input: {a.checkpoint}")
