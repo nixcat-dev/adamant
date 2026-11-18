@@ -464,6 +464,10 @@ private:
         return r.ok();
     }
     Flow set_sampling() override {
+        if (req_logprobs >= 0) {   // copy_logits reads the session's one row, not a window's
+            std::printf("ERR logprobs: this model reports no log-probabilities\n");
+            return Flow::next;
+        }
         hist_n = req_sp.penalty_last_n;
         const basalt::model::Result r = rt_.session().set_logit_bias(req_bias_present ? req_bias.data() : nullptr);
         if (!r.ok()) {

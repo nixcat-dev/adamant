@@ -112,7 +112,7 @@ void QfnRequest::decode_state_begin() {
     full_ema = 0.5;                 // how often windows are accepted whole
     pair_hint = false;                // windows are accepted whole often enough to run the chain on for a guess
     pair_req = runtime_.pipe_on && ppl == nullptr && !relax_on && gguard == nullptr && hist_n == 0 && !in_slot &&
-                          runtime_.kv_floor == 0;
+                          runtime_.kv_floor == 0 && req_logprobs < 0;
     if (runtime_.pipe_on) runtime_.mtp.set_max_drafts((pair_req ? basalt::core::kMtpChainMax : runtime_.S_mtp) - 1);
     pair_runs = 0;
     pair_holds = 0;
@@ -330,7 +330,8 @@ inline bool QfnRequest::run_window(int T, int e0, int& TB) {
             : try_pair ? cv->run_pair(*ov, T, window.data(), p, guess, win_b.data(), TB, runtime_.win_pool_fn, user_c, user_o,
                                       outv.data(), runtime_.err)
                        : cv->run(T, window.data(), p, runtime_.win_pool_fn, user_c, outv.data(), runtime_.err);
-    return ran_ok;
+    // a logprobs request reads every row of the window's head: exact before the loop copies them
+    return ran_ok && (req_logprobs < 0 || cv->exact_logits(T, runtime_.err));
 }
 
 inline bool QfnRequest::take_held(int T) {

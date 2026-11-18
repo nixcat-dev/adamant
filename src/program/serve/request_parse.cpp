@@ -1,5 +1,6 @@
 // src/program/serve/request_parse.cpp - request parse operations.
 #include "request.hpp"
+#include "token_logprobs.hpp"
 #include "../cli/tokens.hpp"
 
 namespace basalt::program::serve {
@@ -38,6 +39,7 @@ Flow Request::parse() {
     req_ppl = -1;
     req_ppl_t = 3;
     req_clip = 0;   // clip=1 (GENT): max_new is a cap, cut to the room the context leaves after the prompt
+    req_logprobs = -1;   // logprobs=K (0..kLogprobsMax): an LP line after each T line (token_logprobs.hpp)
     if (endp != nullptr) {   // GENI takes the same keys (image requests were always greedy); its
                              // embedding file path is the first token without an =
         for (;;) {
@@ -67,6 +69,7 @@ Flow Request::parse() {
             else if (key == "clip") req_clip = std::atoi(tok.c_str() + eq + 1);
             else if (key == "ppl") req_ppl = std::atoi(tok.c_str() + eq + 1);
             else if (key == "ppl_t") req_ppl_t = std::atoi(tok.c_str() + eq + 1);
+            else if (key == "logprobs") req_logprobs = std::atoi(tok.c_str() + eq + 1);
             // unknown keys are skipped: the ids start at the first token without '='
         }
     }
@@ -96,6 +99,14 @@ Flow Request::parse() {
         if (runtime_.o.batch > 0) bias_error = "continuous batching is not supported";
         const bool ok = runtime_.o.batch <= 0 && basalt::core::parse_logit_bias(req_bias_text, (int) runtime_.n_vocab, req_bias, bias_error);
         if (!ok) { std::printf("ERR logit_bias: %s\n", bias_error.c_str()); return Flow::next; }
+    }
+    if (req_logprobs >= 0 && runtime_.o.batch > 0) {
+        std::printf("ERR logprobs: continuous batching is not supported\n");
+        return Flow::next;
+    }
+    if (req_logprobs > kLogprobsMax) {
+        std::printf("ERR logprobs: at most %d alternatives\n", kLogprobsMax);
+        return Flow::next;
     }
 
     if (geni && endp != nullptr) {

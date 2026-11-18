@@ -31,6 +31,7 @@ Flow QfnRequest::set_sampling() {
     // relaxed acceptance: sampled text requests without a logit_bias; never the quality gate
     relax_on = req_relax > 0.0f && !req_sp.greedy && !req_bias_present && ppl == nullptr && gguard == nullptr;
     runtime_.ver.set_draft_probe(relax_on);
+    runtime_.ver.set_logprobs(req_logprobs >= 0);   // (the second chain runs no logprobs window: pair_req)
     in_call = false;   // inside a tool call (its tags seen last in the prompt or the output): exact
     for (size_t i = ids.size(); i-- > 0;)
         if (ids[i] == runtime_.o.relax_call_open || ids[i] == runtime_.o.relax_call_close) { in_call = ids[i] == runtime_.o.relax_call_open; break; }

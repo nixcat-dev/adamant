@@ -6,6 +6,7 @@
 
 #include "request.hpp"
 #include "reply_rows.hpp"
+#include "token_logprobs.hpp"
 
 namespace basalt::program::serve {
 
@@ -124,6 +125,15 @@ Flow Request::decode_loop(B& b) {
         // last pick, and that pick is the next token, as at any window's end
         const ReplyRows rr = reply_rows(outv.data(), e0, a, produced_n, max_new, eos_ids, ppl != nullptr);
         const int keep = rr.keep;
+        if (req_logprobs >= 0) {   // the rows of the picks this window sends, copied before the commit and the draft
+            const size_t nv = (size_t) runtime_.n_vocab;
+            lp_rows.resize((size_t) rr.emit * nv);
+            for (int i = 0; i < rr.emit; ++i)
+                if (!b.copy_logits(e0 + i, lp_rows.data() + (size_t) i * nv)) {
+                    std::printf("ERR logprobs: the head logits copy failed\n");
+                    return Flow::error;
+                }
+        }
         // the draft launches first; the commit, the adaptive round and the output go in its shadow
         const bool will_draft = !rr.ends && produced_n + rr.emit < max_new;
         if constexpr (kSpec) b.note_draft_probs(from_sfx);
@@ -143,7 +153,12 @@ Flow Request::decode_loop(B& b) {
             commit_ok = hold ? true : b.commit(keep, cerr, 1);
             if (!hold) tier.after_commit();
             for (int i = e0; i <= a && produced_n < max_new && !eos; ++i) {
-                std::printf("T %d\n", (int) outv[(size_t) i]);
+                if (req_logprobs < 0)
+                    std::printf("T %d\n", (int) outv[(size_t) i]);
+                else   // one write: no other line comes between a token and its LP line
+                    std::printf("T %d\n%s\n", (int) outv[(size_t) i],
+                                lp_line(lp_rows.data() + (size_t) (i - e0) * (size_t) runtime_.n_vocab, runtime_.n_vocab,
+                                        outv[(size_t) i], req_logprobs).c_str());
                 basalt::core::progress_beat();
                 ++produced_n;
                 b.on_token(outv[(size_t) i]);

@@ -2,6 +2,7 @@
 #include "models/qwen4exp/adapter.hpp"
 #include "basalt/models/qwen4exp/shared_names.hpp"
 #include "qfn_request.hpp"
+#include "../../../program/serve/token_logprobs.hpp"
 #include "../../../program/tokenizer/unicode_flags.hpp"
 #include "../../../program/cli/tokens.hpp"
 
@@ -141,12 +142,12 @@ void QfnRuntime::print_info() {
                     gpu_ids += (gpu_ids.empty() ? "" : ",") + std::string(bus);
             }
         }
-        std::printf("INFO logit_bias=%lld context=%lld kv=%s kv_resident=%lld expert_slots=%lld expert_cache_mib=%lld "
+        std::printf("INFO logit_bias=%lld logprobs=%d context=%lld kv=%s kv_resident=%lld expert_slots=%lld expert_cache_mib=%lld "
                     "expert_slots_primary=%lld expert_cache_primary_mib=%lld spec=%d "
                     "mtp_max=%d lookup=%d vram_free_mib=%lld cvec=%s arena_mib=%lld pool_workers=%d pcie_frac=%.2f "
                     "conversation_cache_mib=%lld conversation_cache_slots=%d "
                     "conversation_cache_min_free_mib=%lld conversation_cache_min_tokens=%d tail_role_token=%lld vram_elastic=%d%s quant=%s gpus=%s engine=" BASALT_VERSION "\n",
-                    (long long) n_vocab, (long long) o.max_context, o.kv.c_str(),
+                    (long long) n_vocab, kLogprobsMax, (long long) o.max_context, o.kv.c_str(),
                     (long long) (g.n_qsa_layers() > 0 && ss.qsa_states[ss.qsa_primary()].kv_mode == 1
                                      ? ss.qsa_states[ss.qsa_primary()].n_slots * 4 : 0),
                     (long long) slots_all, (long long) mib_all,
