@@ -19,6 +19,7 @@ from serve.api.anthropic import anthropic_collect, anthropic_events
 from serve.engine.errors import ClientGone, EngineDied, EngineError, EngineStarting, EngineStuck, GpuBusy, ModelBusy
 from serve.api.grammar import REQUEST_KEY as GRAMMAR_KEY
 from serve.api.logit_bias import REQUEST_KEY as BIAS_KEY, checked as checked_bias
+from serve.api.logprobs import REQUEST_KEY as LOGPROBS_KEY, checked as checked_logprobs
 from serve.config import checked_sampling
 from serve.frontend import anthropic_to_messages, forced_call, openai_to_messages
 from serve.api.openai import openai_chunks, openai_collect
@@ -622,6 +623,7 @@ def make_handler(target: Service | Router):
             self._take_turn(bool(req.get("stream")))
             self.svc.load()
             req[BIAS_KEY] = checked_bias(req, self.svc.engine)     # a bad logit_bias is a 400 before streaming
+            req[LOGPROBS_KEY] = checked_logprobs(req, self.svc.engine)     # likewise logprobs and top_logprobs
             req[GRAMMAR_KEY] = self.svc.grammar_for(tools, req.get("tool_choice"), req.get("tools"),
                                                req.get("response_format"))
             max_new = int(req.get("max_completion_tokens") or req.get("max_tokens") or 0)   # 0/-1: the rest of the context

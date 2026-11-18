@@ -5,6 +5,7 @@ import json
 import time
 import uuid
 
+from serve.api.logprobs import REQUEST_KEY as LOGPROBS_KEY, Logprobs, content as logprobs_content
 from serve.frontend import Event
 from serve.service import Service
 
@@ -49,6 +50,10 @@ def openai_chunks(svc: Service, req: dict, ids, thinking, tools, max_new, cancel
             whole = calls and streamed.keys() <= finished
             finish = "tool_calls" if whole and x["finish"] == "stop" else {"cancel": "stop"}.get(x["finish"], x["finish"])
             last = chunk({}, finish)
+            lp = req.get(LOGPROBS_KEY)
+            if isinstance(lp, Logprobs):                # every token's entry, on the last chunk
+                last["choices"][0]["logprobs"] = {"content": logprobs_content(svc.tok, lp, svc.stop_ids),
+                                                  "refusal": None}
             last["usage"] = {"prompt_tokens": len(ids), "completion_tokens": x["completion_tokens"],
                              "total_tokens": len(ids) + x["completion_tokens"],
                              # prompt tokens served from the conversation cache
@@ -90,9 +95,11 @@ def openai_collect(chunks) -> dict:
         msg["reasoning_content"] = "".join(reasoning)
     if calls:
         msg["tool_calls"] = calls
+    choice = {"index": 0, "message": msg, "finish_reason": last["choices"][0]["finish_reason"]}
+    if "logprobs" in last["choices"][0]:
+        choice["logprobs"] = last["choices"][0]["logprobs"]
     out = {"id": last["id"], "object": "chat.completion", "created": last["created"], "model": last["model"],
-           "choices": [{"index": 0, "message": msg, "finish_reason": last["choices"][0]["finish_reason"]}],
-           "usage": last["usage"]}
+           "choices": [choice], "usage": last["usage"]}
     if last.get("timings"):
         out["timings"] = last["timings"]
     return out

@@ -18,8 +18,20 @@
 | `relaxed_drafting` | [0, 1] 或 `false` | 该请求的宽松 drafting 阈值。`false` 或 `0` 强制精确采样。 |
 
 同时会读取：`max_tokens` / `max_completion_tokens`（`0` 或 `-1` 表示用到上下文剩余部分）、`stop`、`logit_bias`、
-`reasoning_effort`、`enable_thinking`、`reasoning_budget_tokens`（`0` 表示不限思考预算）。Anthropic 的
-`thinking.budget_tokens` 是同一个预算。
+`reasoning_effort`、`enable_thinking`、`reasoning_budget_tokens`（`0` 表示不限思考预算）、`logprobs`、`top_logprobs`。
+Anthropic 的 `thinking.budget_tokens` 是同一个预算。
+
+## 对数概率
+
+- **请求：** Chat Completions 接受 `logprobs: true` 和 `top_logprobs`，每个 token 0 到 20 个候选。并行槽位
+  （`parallel` 大于 1）会拒绝它。
+- **回复：** `choices[0].logprobs.content` 按顺序列出模型写出的每个 token，包括思考和工具调用。每一项有 `token`
+  （该 token 补全的文本，所以各项连起来就是模型写出的内容）、`logprob`、`bytes` 和 `top_logprobs`。流式回复把这个
+  列表放在最后一个 chunk 上。
+- **取值：** 模型原始 logits 的 log-softmax，在 temperature、惩罚、`logit_bias` 和语法之前。来自被接受的 draft 的
+  token，其值取自确认它的那一行 verify。
+- **不列出：** 结束 token，以及服务器自己写入的 token（思考到达预算时的收束、强制工具调用的开头）。在停止字符串处截断的
+  回复，列出到补全该停止字符串的那个 token 为止。
 
 ## 思考
 

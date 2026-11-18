@@ -18,7 +18,20 @@ default, then the engine's. `/props` reports what is in effect. An out-of-range 
 | `relaxed_drafting` | [0, 1] or `false` | This request's relaxed-drafting threshold. `false` or `0` forces exact sampling. |
 
 Also read: `max_tokens` / `max_completion_tokens` (`0` or `-1` = the rest of the context), `stop`, `logit_bias`, `reasoning_effort`,
-`enable_thinking`, `reasoning_budget_tokens` (`0` = no thinking budget). Anthropic's `thinking.budget_tokens` is the same budget.
+`enable_thinking`, `reasoning_budget_tokens` (`0` = no thinking budget), `logprobs`, `top_logprobs`. Anthropic's
+`thinking.budget_tokens` is the same budget.
+
+## Log-probabilities
+
+- **Request:** Chat Completions takes `logprobs: true` and `top_logprobs`, 0 to 20 alternatives a token. Parallel slots
+  (`parallel` above 1) refuse it.
+- **Reply:** `choices[0].logprobs.content` lists every token the model wrote, in order, thinking and tool calls included. Each
+  entry has `token` (the text the token completes, so the entries spell what the model wrote), `logprob`, `bytes` and
+  `top_logprobs`. A streamed reply carries the list on its last chunk.
+- **Values:** the log-softmax of the model's raw logits, before temperature, penalties, `logit_bias` and grammar. A token from an
+  accepted draft has the value of the verify row that confirmed it.
+- **Not listed:** the end token, and the tokens the server writes itself (the close of the thinking at its budget, a forced tool
+  call's opening). A reply cut at a stop string lists the tokens up to the one that completes it.
 
 ## Thinking
 
