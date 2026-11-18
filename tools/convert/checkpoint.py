@@ -9,6 +9,8 @@ nvidia/Qwen3.8-Flash-Next-FP4-Local), for tools/convert/convert.py.
                             BF16 kept, norms as F32 with the "+1" folded in, GDN value heads in the GGUF head order,
                             projections quantized once from BF16 or MXFP8 (Q6_K, or Q8_0 where rows are not whole
                             256-value blocks, or for the 8-bit variant); MXFP8 values widen to f32 exactly first
+  per_layer_token_embd      the n-gram table as Q8_0, from FP8 shards (model_sections.PleFp8) or NVFP4 shards
+                            (PleNvfp4)
   gguf_kv, tokenizer        the model metadata and tokenizer from config.json, generation_config.json, README.md and
                             the tokenizer files
 
@@ -34,6 +36,7 @@ QWEN35_HF_SPLIT = (r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]
 VALUES_PER_JOB = 1 << 22
 TYPE_ID = {"F32": 0, "F16": 1, "Q8_0": 8, "Q6_K": 14, "BF16": 30}
 E4M3 = S.fp8_e4m3_table()
+E2M1 = np.array([0, 0.5, 1, 1.5, 2, 3, 4, 6, -0.0, -0.5, -1, -1.5, -2, -3, -4, -6], np.float32)
 CSF_FIXED, CSF_EXC = ".nvfp4_csf_fixed", ".nvfp4_csf_exceptions"
 
 
@@ -124,6 +127,14 @@ def mxfp8_values(codes: np.ndarray, scales: np.ndarray) -> np.ndarray:
     x = E4M3[codes].reshape(codes.shape[0], -1, 32)
     e = scales.astype(np.int32)[..., None] - 127
     return np.where(e == 128, np.float32(np.nan), np.ldexp(x, e)).reshape(codes.shape)
+
+
+def nvfp4_values(codes: np.ndarray, scales: np.ndarray) -> np.ndarray:
+    """Model Optimizer's NVFP4 rows as float32: E2M1 codes (value 2i in the low nibble of byte i) times their UE4M3
+    scale per 16 values."""
+    v = np.empty((codes.shape[0], codes.shape[1] * 2), np.uint8)
+    v[:, 0::2], v[:, 1::2] = codes & 15, codes >> 4
+    return E2M1[v] * np.repeat(E4M3[scales], 16, axis=1)
 
 
 # ------------------------------------------------------------------ routed experts
@@ -687,9 +698,65 @@ def model_kv(ck: Checkpoint, ple_dim: int, file_type: int, name: str | None) -> 
     return kv
 
 
-def ple_table(ck: Checkpoint) -> pathlib.Path:
-    """The checkpoint file that holds the FP8 n-gram table."""
+def ple_table(ck: Checkpoint):
+    """The n-gram table as Q8_0 rows: FP8 shards with one BF16 scale, all in one file (model_sections.PleFp8), or NVFP4
+    shards with one FP32 weight_scale_2 (PleNvfp4)."""
+    if any(k.endswith("ngram_embedding.weight_scale_2") for k in ck.t):
+        return PleNvfp4(ck)
     hits = sorted({ck.t[k][0] for k in ck.t if k.endswith("ngram_embedding.weight_scale")})
     if len(hits) != 1:
         raise S.ConvertError(f"{ck.dir}: {len(hits)} files hold an ngram_embedding.weight_scale")
-    return hits[0]
+    return S.PleFp8(str(hits[0]))
+
+
+class PleNvfp4:
+    """The n-gram table of a checkpoint that stores it as NVFP4 shards (`...ngram_embedding.shard_K.weight`, E2M1 pairs,
+    with `.weight_scale`, UE4M3 per 16 values) and one FP32 `...ngram_embedding.weight_scale_2`, as Q8_0 rows: values
+    are code x block scale x weight_scale_2, re-blocked per 32 values. The shards may sit in several files."""
+
+    def __init__(self, ck: Checkpoint, chunk_rows: int = 65536):
+        self.chunk_rows = chunk_rows
+        g = [k for k in ck.t if k.endswith("ngram_embedding.weight_scale_2")]
+        if len(g) != 1:
+            raise S.ConvertError(f"{ck.dir}: {len(g)} ngram_embedding.weight_scale_2 tensors")
+        stem = g[0][:-len("weight_scale_2")]
+        ck.need(g[0], "F32", (1,))
+        self.scale = float(ck.values(g[0])[0])
+        self.shards = []
+        while f"{stem}shard_{len(self.shards)}.weight" in ck.t:
+            k = f"{stem}shard_{len(self.shards)}."
+            rows = ck.t[k + "weight"][3][0]
+            ck.need(k + "weight", "U8", (rows, S.PLE_DIM // 2))
+            ck.need(k + "weight_scale", "F8_E4M3", (rows, S.PLE_DIM // 16))
+            w, s = ck.t[k + "weight"], ck.t[k + "weight_scale"]
+            self.shards.append((w[0], w[1], s[0], s[1], rows))
+        if not self.shards:
+            raise S.ConvertError(f"{ck.dir}: no n-gram table shards beside {g[0]}")
+        self.files = sorted({x for w, _, s, _, _ in self.shards for x in (w, s)} | {ck.t[g[0]][0]})
+        self.rows = sum(sh[4] for sh in self.shards)
+        self.nbytes = self.rows * (S.PLE_DIM // 32 * 34)
+        self.conversion = {"src_type": "NVFP4", "dst_type": "Q8_0",
+                           "method": "e2m1 code x ue4m3 scale per 16 x fp32 weight_scale_2, Q8_0 blocks of 32 "
+                                     "(ggml reference rounding)", "scale": self.scale}
+
+    def jobs(self):
+        for wp, wo, sp, so, rows in self.shards:
+            for r in range(0, rows, self.chunk_rows):
+                n = min(self.chunk_rows, rows - r)
+                yield (str(wp), wo + r * S.PLE_DIM // 2, str(sp), so + r * S.PLE_DIM // 16, n, self.scale)
+
+    def chunks(self, pool, depth: int = 16):
+        """The Q8_0 rows in order, made on `pool` with at most `depth` chunks in flight."""
+        yield from bounded_imap(pool, _ple_nvfp4_job, self.jobs(), depth)
+
+
+def _ple_nvfp4_job(args):
+    wp, wo, sp, so, rows, scale = args
+    codes = np.fromfile(wp, dtype=np.uint8, count=rows * S.PLE_DIM // 2, offset=wo).reshape(rows, -1)
+    sc = np.fromfile(sp, dtype=np.uint8, count=rows * S.PLE_DIM // 16, offset=so).reshape(rows, -1)
+    if (sc & 0x80).any() or (sc == 0x7F).any():
+        raise S.ConvertError(f"a UE4M3 scale with the sign bit set or NaN at {pathlib.Path(sp).name}+{so}")
+    x = nvfp4_values(codes, sc) * np.float32(scale)
+    if not np.isfinite(x).all():
+        raise S.ConvertError("the NVFP4 table holds a non-finite value")
+    return S.q8_0(x)
