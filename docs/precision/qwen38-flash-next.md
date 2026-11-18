@@ -183,11 +183,12 @@ The verify window reads all 248,320 rows of the head for every column. Two stage
 - **Q8_0 head (NVFP4 pack), exact.** Each row is held as bit planes. A screen reads each row's block scales and bits 2 to 7, and
   bounds every logit with an interval that provably holds it. Rows whose upper bound reaches the column's K-th largest lower bound are
   scored exactly. Every consumer reads the exact head's values, so the result is lossless by proof. K is 1 for greedy, `top_k` for a
-  sampled list of 64 or fewer, and 0 (all rows exact) otherwise. Exact rows per column on real inputs: K=1 2 on average; K=20 301;
-  K=64 1,214.
+  sampled list of 64 or fewer, and 0 (all rows exact) otherwise or when the request asks for log-probabilities. Exact rows per column
+  on real inputs: K=1 2 on average; K=20 301; K=64 1,214.
 - **Q6_K head (IQ3_S pack), approximate tail.** Every row is scored from a 2-bit copy. Rows within 4 of the 64th-best approximate logit
   are rescored exactly. The softmax tail outside them carries the copy's error (about 0.7 logit rms). Top-64 recall 99.97% to 99.98%
-  at margin 4 on 3,614 real inputs.
+  at margin 4 on 3,614 real inputs. A request that asks for log-probabilities scores the window's head again exactly before it reads
+  the rows.
 
 Costs: the Q6_K head adds KLD 0.0022 [0.0018, 0.0025] (1.5%) and PPL 0.25% (IQ3_S, 100 chunks, 400 W + 180 W), with no argmax change on
 25,500 rows. The Q8_0 two-stage head is 350 us per window against 439 us for the Q8_0 head (NVFP4, cold prose, 400 W + 180 W).

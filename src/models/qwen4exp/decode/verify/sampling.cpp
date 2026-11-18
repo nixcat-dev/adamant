@@ -41,7 +41,7 @@ bool Verifier::set_logit_bias(const std::vector<float>& bias, std::string& err) 
 int Verifier::head_keep() const {
     using namespace basalt::kernels;
     if (!head_sampling_) return 1;   // the recorded greedy pick only
-    if (sampling_.logit_bias != nullptr) return 0;
+    if (logprobs_ || sampling_.logit_bias != nullptr) return 0;
     if (hist_d_ != nullptr && sampling_.penalty_last_n > 0 &&
         (sampling_.penalty_repeat != 1.0f || sampling_.penalty_freq != 0.0f || sampling_.penalty_present != 0.0f))
         return 0;
@@ -90,6 +90,15 @@ bool Verifier::exact_head_rows(int T, std::string& err) {
         return false;
     }
     return true;
+}
+
+bool Verifier::exact_logits(int T, std::string& err) {
+    if (next_ != nullptr) return next_->exact_logits(T, err);   // a layer split: the head is on the last stage
+    if (!exact_head_rows(T, err)) return false;
+    const OnDevice on_device(device_);
+    if (cudaStreamSynchronize(cs_) == cudaSuccess) return true;   // copy_logits' plain copy does not order against cs_
+    err = "verify head: the exact pass failed";
+    return false;
 }
 
 bool Verifier::reserve_wide_sampler(std::string& err) {

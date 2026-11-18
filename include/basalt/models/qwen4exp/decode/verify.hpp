@@ -174,6 +174,8 @@ public:
     /// q6k_vhead, or a Q8_0 head's screened window, q80p_vhead) is run again exactly over the window's T columns, the
     /// plain kernel's bits.  Other heads, or a window whose head was exact: nothing.
     bool exact_head_rows(int T, std::string& err);
+    /// exact_head_rows on the last stage, then a wait for its stream: copy_logits then reads every row exact.
+    bool exact_logits(int T, std::string& err);
     /// One request's token bias (one float per vocabulary entry, added to the logits before the sampler chain); empty
     /// clears it.  Applies to this verifier's own sampling only: the drafter never sees it.  Call before set_sampling;
     /// copied to the final stage's device only when it changed.
@@ -203,6 +205,9 @@ public:
     /// On: a sampled window also leaves draft_prob(t), the probability row t's final distribution gives the window's
     /// token t + 1 (t < T - 1), for relaxed acceptance.  The picks are unchanged.  Off by default; set per request.
     void set_draft_probe(bool on) { draft_probe_ = on; if (next_) next_->set_draft_probe(on); }
+    /// On: the request reads every row of the head (log-probabilities), so a Q8_0 head's window keeps every row exact,
+    /// as for a logit bias.  The picks are unchanged.  Off by default; set per request.
+    void set_logprobs(bool on) { logprobs_ = on; if (next_) next_->set_logprobs(on); }
     /// Valid after a sampled run() with the probe on.
     float draft_prob(int t) const { return next_ ? next_->draft_prob(t) : ((volatile float*) h_qp_)[t]; }
     /// After a sampled run(): row t's kept list at [t * kTopIds, (t + 1) * kTopIds), best first, -1 after it.
@@ -433,7 +438,7 @@ private:
     bool run_end(int32_t* out, std::string& err);
     /// A Q8_0 head in bit planes runs two-stage in the window (q80p_vhead) with the exact list this long: the top_k of
     /// a sampled request (64 at most), 1 for a greedy pick; 0 (every row exact) for a request whose sampling reads more
-    /// than that list: a longer list, a logit bias, non-neutral penalties.
+    /// than that list: a longer list, a logit bias, non-neutral penalties, log-probabilities.
     int head_keep() const;
     /// The list length for the next launched window (stream-ordered, written only when it changes).
     void set_head_keep(int keep);
@@ -532,6 +537,7 @@ private:
     int32_t* h_head_from_ = nullptr; int32_t* m_head_from_ = nullptr;
     bool head_sampling_ = true;          ///< set_head_sampling
     bool draft_probe_ = false;           ///< set_draft_probe
+    bool logprobs_ = false;              ///< set_logprobs
     std::vector<float> logit_bias_host_;
     float* logit_bias_device_ = nullptr;
     float* row_bias_device_ = nullptr;   ///< resample_row's bias

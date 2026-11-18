@@ -37,6 +37,7 @@ protected:
     int req_ppl{};
     int req_ppl_t{};
     int req_clip{};
+    int req_logprobs{};   // logprobs=K: each T line is followed by its LP line with the K likeliest tokens (-1: none)
     std::vector<float> req_bias{};
     std::string emb_path{};
     std::vector<int64_t> ids{};
@@ -83,6 +84,7 @@ protected:
     bool cancelled{};
     std::vector<int32_t> window{};
     std::vector<int32_t> outv{};
+    std::vector<float> lp_rows{};   // a logprobs window: the head rows of the picks it sends
     bool first_window{};
     int hist_n{};
     int64_t p{};

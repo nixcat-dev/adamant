@@ -5,6 +5,7 @@ import threading
 import time
 from typing import Iterator, Protocol
 
+from serve.api.logprobs import REQUEST_KEY as LOGPROBS_KEY, Logprobs
 from serve.engine.slots import AdmissionQueue
 from serve.util.text import IM_END
 
@@ -70,9 +71,12 @@ class MockEngine:
             script = self.scripts[min(self.turns, len(self.scripts) - 1)]
             self.turns += 1
         self.script = script
+        lp = (sampling or {}).get(LOGPROBS_KEY)
         for t in script[:max_new]:
             if cancel.is_set():
                 return
             if self.delay:
                 time.sleep(self.delay)
+            if isinstance(lp, Logprobs):        # the engine's LP line, scripted: the token at -0.5, then byte ids
+                lp.rows.append((t, -0.5, [((t + j) % 256, -0.5 - j) for j in range(lp.top)]))
             yield t

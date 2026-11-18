@@ -3,7 +3,8 @@
 Protocol (one line each):
   * start: stdout `INFO k=v ...` lines, then `READY <ctx> [stop]` (stop: STOP is honoured mid-request).
   * solo: `GEN <max_new> [k=v ...] <ids>` (GENI with embeddings) -> `T <id>`, `PP <read> <total> ...`,
-    `RESUME <n>`, then `DONE ...`; `STOP` ends it early. `ERR ...` is a failure.
+    `RESUME <n>`, then `DONE ...`; `STOP` ends it early. `ERR ...` is a failure. With `logprobs=K` each `T` line is
+    followed by `LP <logprob> [<id>:<logprob> ...]` (INFO logprobs=N).
   * solo, text (INFO text_prompt=1): `GENT <max_new> [k=v ...] <nbytes> [plain=a:b,...]`, a newline, then nbytes of
     raw UTF-8: the engine tokenizes (control literals on; `plain` byte spans are text) and answers like a GEN, with
     `PT <n> <max_new>` before the first PP line. `clip=1` cuts max_new to the room the context leaves after the prompt.
@@ -32,6 +33,7 @@ from pathlib import Path
 
 from serve.api.grammar import REQUEST_KEY as GRAMMAR_KEY, engine_key as grammar_key
 from serve.api.logit_bias import REQUEST_KEY as BIAS_KEY, engine_key as bias_key
+from serve.api.logprobs import REQUEST_KEY as LOGPROBS_KEY, Logprobs, engine_key as logprobs_key, take_line
 from serve.engine import lifeline, suspend
 from serve.engine.flags import flag_value
 from serve.engine.errors import EngineDied, EngineError, EngineSilent, EngineStartError, EngineStuck
@@ -106,8 +108,8 @@ def relay_auto_flags(line: str) -> bool:
 
 # First words of the stdout lines the server reads (or knowingly ignores); any other line is the engine talking to
 # its log, such as a device-side trap message.
-PROTOCOL_LINES = (AUTO_FLAGS, "INFO ", "READY", "T ", "PP ", "PL ", "PT ", "RESUME ", "REUSED ", "DONE", "ERR", "BADM ",
-                  "BT ", "BDONE ", "YIELDED ", "VRAM ", "ENC ")
+PROTOCOL_LINES = (AUTO_FLAGS, "INFO ", "READY", "T ", "LP ", "PP ", "PL ", "PT ", "RESUME ", "REUSED ", "DONE", "ERR",
+                  "BADM ", "BT ", "BDONE ", "YIELDED ", "VRAM ", "ENC ")
 
 
 def log_unparsed(line: str, log) -> None:
@@ -152,7 +154,7 @@ def _number(v) -> bool:
 FATAL_PREFIXES = ("ERR verify: timed out at layer ", "ERR verify batch: timed out at layer ",
                   "ERR verify: an earlier window never finished", "ERR verify batch: an earlier window never finished")
 # Engine ERR texts that are the request's fault (a 400); any other ERR of a request is an engine failure (a 500).
-REQUEST_ERRS = ("prompt (", "bad request:", "sampling ", "logit_bias:", "grammar:", "ppl:",
+REQUEST_ERRS = ("prompt (", "bad request:", "sampling ", "logit_bias:", "logprobs:", "grammar:", "ppl:",
                 "a token id is outside the vocabulary", "this engine was started without --vision",
                 "the prompt cannot end in an image")
 
@@ -690,7 +692,7 @@ class ProcessEngine:
         elif _number(rd):
             keys += f" relax={float(rd)!r}"
         return keys + ProcessEngine.projection_key(sampling) + bias_key(sampling.get(BIAS_KEY)) \
-            + grammar_key(sampling.get(GRAMMAR_KEY))
+            + grammar_key(sampling.get(GRAMMAR_KEY)) + logprobs_key(sampling.get(LOGPROBS_KEY))
 
     @staticmethod
     def projection_key(sampling: dict) -> str:
@@ -1302,6 +1304,9 @@ class ProcessEngine:
             self.proc.stdin.flush()
         except OSError:                                  # the pipe is gone: the engine died
             raise EngineDied(f"the engine stopped unexpectedly (exit code {self.exit_code()})") from None
+        lp = (sampling or {}).get(LOGPROBS_KEY)
+        lp = lp if isinstance(lp, Logprobs) else None
+        held = None                                   # a logprobs request's token, until its LP line is read
         done = False
         # silence allowance: silence_s plus the first chunk's read time; each PP line resets it to its chunk's time
         silence = float(self.silence_s or 0)
@@ -1333,11 +1338,21 @@ class ProcessEngine:
                     raise EngineDied(f"the engine stopped unexpectedly (exit code {self.exit_code()})")
                 heard = time.monotonic()                  # any line counts as output
                 beat = heard
+                if held is not None and not line.startswith("LP "):   # an engine that wrote no LP line for it
+                    yield held
+                    held = None
                 if line.startswith("T "):
                     allow = silence
                     if cancel.is_set():
                         return
-                    yield int(line[2:])
+                    if lp is None:
+                        yield int(line[2:])
+                    else:
+                        held = int(line[2:])              # its LP line comes next, in the same write
+                elif line.startswith("LP ") and held is not None:
+                    take_line(lp, held, line)
+                    token, held = held, None
+                    yield token
                 elif line.startswith("PT ") and text is not None:   # the engine tokenized the text
                     f = line.split()
                     if len(f) >= 3 and f[1].isdigit() and f[2].lstrip("-").isdigit():
