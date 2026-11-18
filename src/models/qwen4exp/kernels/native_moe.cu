@@ -125,11 +125,6 @@ __global__ void dm_combine_kernel(const float* __restrict__ parts, const float* 
     if (shared) sum += sh_gate ? sh_mul(shared[tk * n_embd + col], sh_gate[tk]) : shared[tk * n_embd + col];
     output[tk * n_embd + col] = sum;
 }
-__device__ __forceinline__ unsigned ld_acquire_gpu(const unsigned* p) {
-    unsigned v;
-    asm volatile("ld.acquire.gpu.global.u32 %0, [%1];" : "=r"(v) : "l"(p) : "memory");
-    return v;
-}
 __device__ __forceinline__ void st_release_gpu(unsigned* p, unsigned v) {
     asm volatile("st.release.gpu.global.u32 [%0], %1;" ::"l"(p), "r"(v) : "memory");
 }
@@ -137,8 +132,9 @@ __device__ __forceinline__ void st_release_gpu(unsigned* p, unsigned v) {
 // programmatic dependent of dec_moe_wait - CUDA0's rows, the weights and the shared row (all final once the wait
 // kernel runs) are loaded before pdl_wait, only the mapped tiers' rows after it.  TAG: the peers' rows carry their
 // own arrival (a dword still holding the tag word is not yet written).  WAITC (with TAG, not DEP): no wait kernel runs
-// before this one; when the layer has CPU entries one thread of the launch waits for the CPU pool's word (cpu_done)
-// and passes the ring on through cpu_seen (device), and the others read the tiers' rows once it has.
+// before this one; when the layer has CPU entries each block's thread 0 waits for the CPU pool's word (cpu_done) and
+// the block barrier, then the block reads the tiers' rows.  cpu_seen takes the ring once this launch waits for no tier
+// (the pool's word seen; with only peer rows owed, block (0,0)'s in); nothing in this launch reads it.
 template<int KM, bool DEP, bool TAG = false, bool WAITC = false>
 __global__ void dm_combine4_kernel(const float* __restrict__ parts, const float* peer_rows, const float* cpu_rows,
                                    const DmPlan* __restrict__ plan, const float* __restrict__ weights,
@@ -171,7 +167,23 @@ __global__ void dm_combine4_kernel(const float* __restrict__ parts, const float*
                               : make_float4(0.f, 0.f, 0.f, 0.f);
     const float gt = shared && sh_gate ? sh_gate[tk] : 1.0f;
     __syncthreads();
-    if (!live) return;   // (thread 0 of block (0, 0), WAITC's waiter, has column 0)
+    // Before any early return, so every thread reaches the block barrier.  Each block's thread 0 reads the pool's
+    // word itself: no block depends on another block of the grid having started.
+    bool pmark = false;
+    if constexpr (WAITC) {
+        const bool cpu = plan->counts[3] > 0;
+        pmark = !cpu && plan->counts[2] > 0;   // only the peers' rows to wait for
+        if (cpu) {
+            if (threadIdx.x == 0) {
+                while (*cpu_done < ring) __nanosleep(64);
+                __threadfence_system();
+            }
+            __syncthreads();
+        }
+        // the pool's rows are in, or none were owed
+        if (!pmark && blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0) st_release_gpu(cpu_seen, ring);
+    }
+    if (!live) return;
     // the mapped rows are read in place; a peer row's own words say it arrived, so its first read needs no wait
     auto mapped_row = [&](int j, int kd) {
         return reinterpret_cast<const float4*>((kd >= 2 ? peer_rows : cpu_rows) + (tk * k + j) * n_embd + col);
@@ -188,24 +200,6 @@ __global__ void dm_combine4_kernel(const float* __restrict__ parts, const float*
     if (shared && sh_gate)   // the shared expert's gate, as its own kernel applied it
         h = make_float4(sh_mul(h.x, gt), sh_mul(h.y, gt), sh_mul(h.z, gt), sh_mul(h.w, gt));
     if constexpr (DEP) pdl_wait();
-    bool pmark = false;
-    if constexpr (WAITC) {
-        // as the wait kernel: every row after the pool's word when the layer has CPU entries (the peers' rows are not
-        // polled while the pool reads its experts).  cpu_seen only ever steps through a window's rings in order, so
-        // holding this ring means this ring's word was seen.
-        const bool cpu = plan->counts[3] > 0;
-        pmark = !cpu && plan->counts[2] > 0;   // only the peers' rows to wait for
-        if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0) {
-            if (cpu) {
-                st_release_gpu(cpu_seen, ring | 0x80000000u);   // waiting for the pool
-                while (*cpu_done < ring) __nanosleep(64);
-                __threadfence_system();
-            }
-            st_release_gpu(cpu_seen, pmark ? ring | 0x40000000u : ring);   // (pmark: waiting for the peers' rows)
-        }
-        if (cpu)
-            while (ld_acquire_gpu(cpu_seen) != ring) __nanosleep(32);
-    }
     // every other mapped row's load is issued before the first one is used
 #pragma unroll
     for (int j = 0; j < KM; ++j) {

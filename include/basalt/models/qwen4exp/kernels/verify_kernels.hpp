@@ -59,21 +59,22 @@ void gdn_commit_finish(const GdnCommitLayers& a, CommitCtl* ctl, void* stream, i
 /// The newest epoch's commit of the layers in `a` (as gdn_commit_layers), its items claimed in order from the epoch's
 /// lazy counter: every item of the first `must_layers` not claimed yet, then further ones while *stop != stop_value
 /// (device word; null: none).  A launch after the epoch's earlier ones finds their items done.
-/// `pf` (or null): what the launch also reads into L2 for the next layer while the layer it runs beside waits for a
-/// tier: once *stop holds stop_value with bit 31 (the combine waits for the CPU pool) or bit 30 (for the peers' rows)
-/// and while it still does, if the layer has entries off CUDA0 at all (ids against ptab, that layer's CUDA0 blob table).
+void gdn_commit_lazy(const GdnCommitLayers& a, CommitCtl* ctl, int must_layers, const uint32_t* stop,
+                     uint32_t stop_value, void* stream, int blocks);
 // record_window fills up to six projections, the FFN read's three 8-bit copies and two router rows; it warns once
 // when a layer has more ranges than this
 constexpr int kLazyPfRanges = 12;
 struct GdnLazyPf {
     const void* p[kLazyPfRanges] = {};   ///< byte ranges (16-byte multiples) in the order they are used; empty ones last
     uint64_t n[kLazyPfRanges] = {};
-    const int32_t* ids = nullptr;
-    int n_ids = 0, n_expert = 0;
-    const unsigned long long* ptab = nullptr;
 };
-void gdn_commit_lazy(const GdnCommitLayers& a, CommitCtl* ctl, int must_layers, const uint32_t* stop,
-                     uint32_t stop_value, void* stream, int blocks, const GdnLazyPf* pf = nullptr);
+/// Reads `pf` into L2 for the next layer beside the combine of ring `ring`, when that combine waits for a tier.
+/// Launched once the layer's plan is final and no earlier than the combine may start: `tiers` is the plan's peer and
+/// CPU entry counts (DmPlan::counts + 2).  With both 0 it returns at once; otherwise it reads until *done (device
+/// word, dec_moe_combine's cpu_seen) holds `ring` or the ranges end.  It waits for no other launch: whatever *done
+/// holds, the launch ends after at most the ranges' bytes.  `steps` (or null): the steps the blocks read are added.
+void gdn_lazy_prefetch(const GdnLazyPf& pf, const int32_t* tiers, const uint32_t* done, uint32_t ring, void* stream,
+                       uint32_t* steps = nullptr, int blocks = 32);
 /// The lazy counter of a new CommitCtl: nothing owed until the first begin kernel.
 bool gdn_commit_lazy_none(CommitCtl* ctl);
 /// A window of several sequences ("segments"): each segment is n consecutive rows with its own GDN state.  The table

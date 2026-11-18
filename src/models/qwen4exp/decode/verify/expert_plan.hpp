@@ -29,7 +29,7 @@ struct DecMoe {
     unsigned long long* wstat = nullptr;   // the per-layer wait counters (device), with --wait-stats
     unsigned long long* ptab0 = nullptr;   // [n_layers * n_expert] CUDA0 blob address or 0
     unsigned int* pub = nullptr;           // [rings][4] the FFN read's counts for the ring's block (HcFusedArgs::pub_ctr)
-    unsigned int* cseen = nullptr;         // the combine's last ring whose CPU word it saw (dec_moe_combine's cpu_seen)
+    unsigned int* cseen = nullptr;         // the last ring whose combine waits for no tier (dec_moe_combine's cpu_seen)
     unsigned long long* route_counts = nullptr;   // [8] what the opt-in routing changes did (route_report); null: none on
     // [rings + 1]: per layer the last adaptive round whose copies into its slots are in, then the round the window's
     // gate/up launches wait for (DmGlueArgs::landed)

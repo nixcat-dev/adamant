@@ -269,10 +269,11 @@ void dec_moe_peer_math_test(const NativeExpertLayout& L, const unsigned long lon
 /// programmatic dependent of a dec_moe_wait launched with `trigger`.  `tag_done` (null words, dep): the peer's rows carry their own arrival, a row dword still holding dec_moe_tag_word() is not yet
 /// written; the combine polls them (tag_done >= ring ends the poll for a released window) and restores the word after
 /// reading, so dec_moe_wait runs with `skip_peer`.  `cpu_done` (with tag_done, not dep): no dec_moe_wait runs before
-/// the combine; when the layer has CPU entries one of its threads waits for cpu_done >= ring and passes the ring on
-/// through `cpu_seen` (one device word, zeroed once: it steps through each window's rings in order, holding the ring
-/// with its top bit set while that thread waits) to the others; a layer with peer entries and no CPU entries holds the
-/// ring with bit 30 set until that thread's own peer rows are in.
+/// the combine; when the layer has CPU entries each block's thread 0 waits for cpu_done >= ring and the block barrier
+/// before reading the tiers' rows.  `cpu_seen` (one device word, zeroed once): the combine stores `ring` there once it
+/// waits for no tier - at once for a layer with no CPU and no peer entries, after the pool's word for one with CPU
+/// entries, after block (0,0)'s peer rows are in for one with peer entries only.  It is a hint for the launches beside
+/// the combine (gdn_commit_lazy, gdn_lazy_prefetch), which never wait for it.
 /// `shared_gate` ([n_tok], or null): `shared` is the shared expert before its per-token gate, and the combine applies
 /// it as shared_expert_multi does (one IEEE product per value) before the add.
 constexpr uint32_t dec_moe_tag_word() { return 0x7fa5a5a5u; }

@@ -14,9 +14,9 @@
 // pending it touches nothing.  With --bench: the finisher's cost with nothing pending and its drain of what is left.
 // --lazy: gdn_commit_lazy against the commit kernel (bit for bit) and a CPU reference (within rounding), for n_keep 1..8:
 // one launch owing every layer, one launch per layer with and without further items, a stop word turned mid-launch, two
-// epochs in a row, nothing owed before the first epoch or after an epoch is done, and the read-ahead (waiting for the
-// pool or the peers, never waiting, every entry on CUDA0).  With --bench: its throughput against the commit kernel, the
-// cost of a launch with nothing owed and the read-ahead's rate.
+// epochs in a row, nothing owed before the first epoch or after an epoch is done; and gdn_lazy_prefetch's steps against
+// a CPU count (no tier entry, the ring already done, a word that never turns, a word turned mid-launch).  With --bench:
+// its throughput against the commit kernel, the cost of a launch with nothing owed and the prefetch's rate.
 #include "basalt/models/qwen4exp/kernels/native_qsa_indexer.hpp"
 #include "basalt/models/qwen4exp/kernels/qsa.hpp"
 #include "basalt/models/qwen4exp/kernels/rope_scaling.hpp"
@@ -902,52 +902,113 @@ bool lazy_tests(cudaStream_t s) {
         }
         CK(cudaStreamDestroy(o));
     }
-    // the read-ahead: weights read into L2 only while the stop word says the combine waits (its ring with the top bit),
-    // only for a layer with entries off CUDA0, and the launch ends once the word turns; the state stays the commit's
-    {
-        set_commit(z.commit, 3, 100);
-        reset();
-        gdn_new(z.g, z.commit, s, 32);
-        CK(cudaStreamSynchronize(s));
-        const auto ref = host(z.g.state, bytes);
-        constexpr size_t WB = (size_t) 48 << 20;
-        char* wbuf = nullptr;
-        CK(cudaMalloc(&wbuf, WB));
-        CK(cudaMemset(wbuf, 1, WB));
-        int32_t* ids = nullptr;
-        unsigned long long* ptab = nullptr;
-        CK(cudaMalloc(&ids, 80 * 4));
-        CK(cudaMalloc(&ptab, 512 * 8));
-        std::vector<int32_t> hid(80);
-        for (int i = 0; i < 80; ++i) hid[i] = (i * 37) % 512;
-        CK(cudaMemcpy(ids, hid.data(), 80 * 4, cudaMemcpyHostToDevice));
-        cudaStream_t o;
-        CK(cudaStreamCreateWithFlags(&o, cudaStreamNonBlocking));
-        for (int form = 0; form < 4; ++form) {   // 0: waiting for the pool, then turned; 1: never waiting; 2: every entry
-                                                 // on CUDA0; 3: waiting for the peers' rows, then turned
-            std::vector<unsigned long long> hp(512, form == 2 ? 1ull : 0ull);
-            CK(cudaMemcpy(ptab, hp.data(), 512 * 8, cudaMemcpyHostToDevice));
-            GdnLazyPf pf;
-            pf.p[0] = wbuf; pf.n[0] = WB / 2; pf.p[1] = wbuf + WB / 2; pf.n[1] = WB / 2;
-            pf.ids = ids; pf.n_ids = 80; pf.n_expert = 512; pf.ptab = ptab;
-            const uint32_t ring = 5;
-            reset();
-            const uint32_t w0 = form == 1 ? ring : form == 3 ? (ring | 0x40000000u) : (ring | 0x80000000u);
-            CK(cudaMemcpy(z.stop, &w0, 4, cudaMemcpyHostToDevice));
-            lazy_begin(z, s);
-            for (int i = 0; i < NL; ++i) gdn_commit_lazy(lazy_args(z), z.ctl, i + 1, z.stop, ring, s, 170, &pf);
-            std::this_thread::sleep_for(std::chrono::microseconds(200));
-            CK(cudaMemcpyAsync(z.stop, &ring, 4, cudaMemcpyHostToDevice, o));
-            CK(cudaDeviceSynchronize());
-            ++cases;
-            if (host(z.g.state, bytes) != ref) { std::printf("  lazy read-ahead form %d: the state differs\n", form); ok = false; }
-        }
-        CK(cudaStreamDestroy(o));
-        CK(cudaFree(wbuf)); CK(cudaFree(ids)); CK(cudaFree(ptab));
-    }
-    std::printf("dec_commit lazy (n_keep 1..8, %d cases, launch forms, stop words, epochs, read-ahead): %s; GPU vs CPU max rel diff %.2e\n",
+    std::printf("dec_commit lazy (n_keep 1..8, %d cases, launch forms, stop words, epochs): %s; GPU vs CPU max rel diff %.2e\n",
                 cases, ok ? "BITWISE" : "FAILED", worst);
     if (worst > 1e-4) { std::printf("  lazy: the commit is off the CPU reference\n"); ok = false; }
+    return ok;
+}
+
+// gdn_lazy_prefetch: the steps its blocks read, against the count a CPU walk of the same ranges gives.  It reads only
+// for a layer with peer or CPU entries, not at all once the done word holds its ring, and to the ranges' end - never
+// longer - under any other word, whether or not the word ever turns.
+bool prefetch_tests(cudaStream_t s) {
+    constexpr uint64_t kStep = 128 << 10;
+    constexpr size_t WB = (size_t) 256 << 20;
+    constexpr uint32_t ring = 5;
+    std::mt19937 rng(31);
+    char* wbuf = nullptr;
+    int32_t* tiers = nullptr;
+    uint32_t *done = nullptr, *steps = nullptr;
+    CK(cudaMalloc(&wbuf, WB));
+    CK(cudaMemset(wbuf, 1, WB));
+    CK(cudaMalloc(&tiers, 8)); CK(cudaMalloc(&done, 4)); CK(cudaMalloc(&steps, 4));
+    cudaStream_t o;
+    CK(cudaStreamCreateWithFlags(&o, cudaStreamNonBlocking));
+    auto set_word = [&](void* d, uint32_t a, uint32_t b, size_t n) {
+        const uint32_t w[2] = {a, b};
+        CK(cudaMemcpy(d, w, n, cudaMemcpyHostToDevice));
+    };
+    auto read_steps = [&] {
+        uint32_t v = 0;
+        CK(cudaMemcpy(&v, steps, 4, cudaMemcpyDeviceToHost));
+        return v;
+    };
+    // the ranges of a case: the model's own before a GDN and a QSA layer (projections, FFN read matrices, router
+    // rows), then random 16-byte multiples (some shorter than a step, the list not always full)
+    auto ranges = [&](int geo, GdnLazyPf& pf) {
+        std::vector<uint64_t> n;
+        if (geo == 0) n = {21504000, 12902400, 12902400, 3481600, 43520, 3604480, 2621440, 5120};   // before a GDN layer
+        else if (geo == 1)   // before a QSA layer
+            n = {25804800, 1075200, 1075200, 2621440, 655360, 12902400, 3481600, 43520, 3604480, 2621440, 5120};
+        else {
+            std::uniform_int_distribution<int> cnt(1, kLazyPfRanges), kind(0, 3);
+            const int nr = cnt(rng);
+            for (int r = 0; r < nr; ++r) {
+                const int k = kind(rng);
+                std::uniform_int_distribution<uint64_t> len(1, k == 0 ? 64 : k == 1 ? 4096 : k == 2 ? 200000 : 1000000);
+                n.push_back(len(rng) * 16);
+            }
+        }
+        uint64_t total = 0, off = 0;
+        for (size_t r = 0; r < n.size(); ++r) {
+            pf.p[r] = wbuf + off; pf.n[r] = n[r];
+            off += (n[r] + 4095) & ~4095ull;
+            total += n[r];
+        }
+        if (off > WB) { std::printf("  prefetch: the test ranges do not fit\n"); std::exit(1); }
+        return total;
+    };
+    bool ok = true;
+    int cases = 0;
+    for (int geo = 0; geo < 40; ++geo) {
+        GdnLazyPf pf;
+        const uint64_t total = ranges(geo, pf);
+        const uint32_t full = (uint32_t) ((total + kStep - 1) / kStep);   // the CPU's count: every step once
+        for (int blocks : {1, 7, 32}) {
+            // 0: no entry off this device; 1: CPU entries, the ring already done; 2..6: entries off this device and a
+            // word that never holds the ring (the earlier ring, a later ring, marked rings, all ones)
+            for (int form = 0; form < 7; ++form) {
+                set_word(tiers, form == 0 ? 0u : form & 1 ? 0u : 3u, form == 0 ? 0u : form & 1 ? 2u : 0u, 8);
+                const uint32_t words[] = {ring - 1, ring, ring - 1, ring + 1, ring | 0x80000000u, ring | 0x40000000u, 0xffffffffu};
+                set_word(done, words[form], 0, 4);
+                set_word(steps, 0, 0, 4);
+                gdn_lazy_prefetch(pf, tiers, done, ring, s, steps, blocks);
+                CK(cudaStreamSynchronize(s));
+                const uint32_t got = read_steps(), want = form < 2 ? 0u : full;
+                ++cases;
+                if (got != want) {
+                    std::printf("  prefetch ranges %d (%llu bytes) blocks=%d form %d: %u steps, the CPU counts %u\n", geo,
+                                (unsigned long long) total, blocks, form, got, want);
+                    ok = false;
+                }
+            }
+        }
+    }
+    // the word turned while one block reads a long range: the launch ends early (20 tries, any of them)
+    {
+        GdnLazyPf pf;
+        pf.p[0] = wbuf; pf.n[0] = WB;
+        const uint32_t full = (uint32_t) (WB / kStep);
+        int early = 0;
+        for (int rep = 0; rep < 20; ++rep) {
+            set_word(tiers, 0, 1, 8);
+            set_word(done, ring - 1, 0, 4);
+            set_word(steps, 0, 0, 4);
+            gdn_lazy_prefetch(pf, tiers, done, ring, s, steps, 1);
+            std::this_thread::sleep_for(std::chrono::microseconds(50 + rep * 10));
+            CK(cudaMemcpyAsync(done, &ring, 4, cudaMemcpyHostToDevice, o));
+            CK(cudaDeviceSynchronize());
+            const uint32_t got = read_steps();
+            ++cases;
+            if (got > full) { std::printf("  prefetch, word turned: %u steps of %u\n", got, full); ok = false; }
+            early += got < full;
+        }
+        if (early == 0) { std::printf("  prefetch: no launch ended when the word turned\n"); ok = false; }
+    }
+    CK(cudaStreamDestroy(o));
+    CK(cudaFree(wbuf)); CK(cudaFree(tiers)); CK(cudaFree(done)); CK(cudaFree(steps));
+    std::printf("dec_commit lazy prefetch (%d cases: real and random ranges, 1/7/32 blocks, tiers, done words): %s\n", cases,
+                ok ? "STEPS MATCH" : "FAILED");
     return ok;
 }
 
@@ -982,29 +1043,30 @@ void lazy_bench(cudaStream_t s) {
     std::printf("bench lazy (35 layers, n_keep 3): commit kernel 32 blocks %.1f us (%.0f GB/s), 170 blocks %.1f us (%.0f GB/s); "
                 "lazy 170 blocks %.1f us (%.0f GB/s); lazy with nothing owed %.2f us\n",
                 a32, gb / (a32 * 1e-6), a170, gb / (a170 * 1e-6), lz, gb / (lz * 1e-6), idle);
-    {   // the read-ahead of a GDN layer's projections (47.3 MB), the combine waiting throughout, nothing owed
+    {   // the read-ahead of a GDN layer's projections (47.3 MB), the combine waiting throughout
         constexpr size_t WB = 47300000 & ~(size_t) 15;
         char* wbuf = nullptr;
         CK(cudaMalloc(&wbuf, WB));
-        int32_t* ids = nullptr;
-        unsigned long long* ptab = nullptr;
-        CK(cudaMalloc(&ids, 20 * 4)); CK(cudaMemset(ids, 0, 20 * 4));
-        CK(cudaMalloc(&ptab, 512 * 8)); CK(cudaMemset(ptab, 0, 512 * 8));
+        int32_t* tiers = nullptr;
+        CK(cudaMalloc(&tiers, 8));
+        const int32_t cpu_only[2] = {0, 4};
+        CK(cudaMemcpy(tiers, cpu_only, 8, cudaMemcpyHostToDevice));
         GdnLazyPf pf;
-        pf.p[0] = wbuf; pf.n[0] = WB; pf.ids = ids; pf.n_ids = 20; pf.n_expert = 512; pf.ptab = ptab;
-        const uint32_t waiting = 5u | 0x80000000u;
-        CK(cudaMemcpy(z.stop, &waiting, 4, cudaMemcpyHostToDevice));
-        if (!gdn_commit_lazy_none(z.ctl)) { std::printf("gdn_commit_lazy_none failed\n"); std::exit(1); }   // nothing owed
+        pf.p[0] = wbuf; pf.n[0] = WB;
+        CK(cudaMemset(z.stop, 0, 4));   // never the ring
         char* flush = nullptr;
         CK(cudaMalloc(&flush, (size_t) 256 << 20));
         const double ra = timed([&] {
             CK(cudaMemsetAsync(flush, 0, (size_t) 256 << 20, s));   // L2 cold
             CK(cudaEventRecord(e0, s));
-            gdn_commit_lazy(lazy_args(z), z.ctl, 0, z.stop, 5u, s, 170, &pf);
+            gdn_lazy_prefetch(pf, tiers, z.stop, 5u, s);
         }, 20);
-        std::printf("bench lazy read-ahead of %.1f MB (L2 cold, the combine waiting): %.1f us (%.0f GB/s incl. launch)\n",
-                    WB / 1e6, ra, WB / 1e9 / (ra * 1e-6));
-        CK(cudaFree(wbuf)); CK(cudaFree(ids)); CK(cudaFree(ptab)); CK(cudaFree(flush));
+        const int32_t no_tier[2] = {0, 0};
+        CK(cudaMemcpy(tiers, no_tier, 8, cudaMemcpyHostToDevice));
+        const double none = timed([&] { gdn_lazy_prefetch(pf, tiers, z.stop, 5u, s); }, 50);
+        std::printf("bench lazy prefetch of %.1f MB (L2 cold, the combine waiting): %.1f us (%.0f GB/s incl. launch); "
+                    "for a layer with no tier entry %.2f us\n", WB / 1e6, ra, WB / 1e9 / (ra * 1e-6), none);
+        CK(cudaFree(wbuf)); CK(cudaFree(tiers)); CK(cudaFree(flush));
     }
 }
 
@@ -1023,6 +1085,7 @@ int main(int argc, char** argv) {
     }
     if (mode == "--lazy") {
         ok = lazy_tests(s) && ok;
+        ok = prefetch_tests(s) && ok;
         if (argc > 2 && std::string(argv[2]) == "--bench") lazy_bench(s);
     }
     return ok ? 0 : 1;

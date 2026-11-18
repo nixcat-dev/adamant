@@ -507,11 +507,9 @@ __global__ void __launch_bounds__(32 * RG) gdn_commit_layers_pipe_kernel(GdnComm
 // The lazy layers' items (layer-major), claimed from the epoch's lazy counter (line 10, reset by the begin kernel): every
 // item of the first `must_layers`, then more while *stop != stop_value.  A block claims only after that check, and
 // commits every item it claims.
-constexpr int kLazyPfBlocks = 32;          // the blocks that read ahead into L2
-constexpr uint64_t kLazyPfStep = 128 << 10;  // bytes a block requests before it looks at the stop word again
 __global__ void __launch_bounds__(32 * RG) gdn_commit_lazy_kernel(GdnCommitLayers a, int conv_blocks, CommitCtl* ctl,
                                                                   int must_layers, const uint32_t* stop,
-                                                                  uint32_t stop_value, GdnLazyPf pf) {
+                                                                  uint32_t stop_value) {
     const int per_state = a.h_v * (S / 32), per_layer = per_state + conv_blocks, total = per_layer * a.n_layers;
     const int must = per_layer * must_layers;
     uint32_t* const claim = ctl->w + (size_t) kCtlWords * 10;
@@ -539,30 +537,22 @@ __global__ void __launch_bounds__(32 * RG) gdn_commit_lazy_kernel(GdnCommitLayer
                               (j - per_state) * 32 * RG + threadIdx.y * 32 + threadIdx.x);
         }
     }
-    // the next layer's weights into L2 while the combine waits for the pool (only when the layer has entries off CUDA0)
-    if (stop == nullptr || pf.n[0] == 0 || (int) blockIdx.x >= kLazyPfBlocks) return;
-    if (threadIdx.y == 0) {
-        bool off = false;
-        for (int i = threadIdx.x; i < pf.n_ids; i += 32) {
-            const int id = __ldcg(pf.ids + i);
-            off |= id >= 0 && id < pf.n_expert && __ldcg(pf.ptab + id) == 0ull;
-        }
-        off = __any_sync(0xffffffffu, off);
-        if (threadIdx.x == 0) s_i = off ? 1 : 0;
-    }
-    __syncthreads();
-    if (s_i == 0 || !lead) return;
-    // the combine marks its wait: the ring with bit 31 (the CPU pool) or bit 30 (only the peers' rows)
-    auto tier_wait = [&](uint32_t w) { return w == (stop_value | 0x80000000u) || w == (stop_value | 0x40000000u); };
-    uint32_t v;
-    while (!tier_wait(v = ld_acquire(stop)) && v != stop_value) __nanosleep(256);
-    if (!tier_wait(v)) return;
-    // step k of every block covers [k * blocks + b, +1) * step of the ranges laid end to end; after its requests a block
-    // reads the step's last word (it lands once that part is in L2), then looks at the stop word again
+}
+
+// The next layer's weights into L2 beside a combine that waits for a tier.  `tiers` (the plan's peer and CPU entry
+// counts) is final before this launch, so the kernel knows whether the combine waits without hearing from it; it
+// waits for nothing itself.  One reading thread a block; step k of block b covers [k * blocks + b, +1) * step of the ranges laid end to end: after
+// its requests the block reads the step's last word (it lands once that part is in L2), then looks at `done` again;
+// it ends when *done holds `ring` (the combine's waits are over) or the ranges do.
+constexpr uint64_t kLazyPfStep = 128 << 10;  // bytes a block requests before it looks at the done word again
+__global__ void gdn_lazy_prefetch_kernel(GdnLazyPf pf, const int32_t* tiers, const uint32_t* done, uint32_t ring,
+                                         uint32_t* steps) {
+    if (__ldcg(tiers) <= 0 && __ldcg(tiers + 1) <= 0) return;   // every entry on this device: the combine has no wait
     uint64_t total_b = 0;
     for (int r = 0; r < kLazyPfRanges; ++r) total_b += pf.n[r];
-    uint32_t acc = 0;
-    for (uint64_t o0 = (uint64_t) blockIdx.x * kLazyPfStep; o0 < total_b; o0 += (uint64_t) kLazyPfBlocks * kLazyPfStep) {
+    uint32_t n = 0;
+    for (uint64_t o0 = (uint64_t) blockIdx.x * kLazyPfStep; o0 < total_b && ld_acquire(done) != ring;
+         o0 += (uint64_t) gridDim.x * kLazyPfStep) {
         const uint64_t o1 = min(o0 + kLazyPfStep, total_b);
         const char* last = nullptr;
         for (uint64_t o = o0; o < o1;) {
@@ -580,12 +570,12 @@ __global__ void __launch_bounds__(32 * RG) gdn_commit_lazy_kernel(GdnCommitLayer
             o += take;
         }
         if (last != nullptr) {
-            const uint4 w = __ldcg((const uint4*) last);
-            acc ^= w.x ^ w.y ^ w.z ^ w.w;
+            [[maybe_unused]] uint32_t w;
+            asm volatile("ld.global.cg.u32 %0, [%1];" : "=r"(w) : "l"(last) : "memory");
         }
-        if (!tier_wait(ld_acquire(stop))) break;
+        ++n;
     }
-    if (acc == 0x9e3779b9u) ctl->w[(size_t) kCtlWords * 10 + 1] = acc;   // keeps the reads (never in practice)
+    if (steps != nullptr && n != 0) atomicAdd(steps, n);
 }
 
 // the same over a segmented window: blockIdx.y = the window row whose segment it commits (only a segment's first row)
@@ -1110,12 +1100,23 @@ void gdn_commit_layers(const GdnCommitLayers& a, void* stream, int blocks) {
 }
 
 void gdn_commit_lazy(const GdnCommitLayers& a, CommitCtl* ctl, int must_layers, const uint32_t* stop,
-                     uint32_t stop_value, void* stream, int blocks, const GdnLazyPf* pf) {
+                     uint32_t stop_value, void* stream, int blocks) {
     if (a.n_layers <= 0) return;
     const int conv_blocks = (a.C + 32 * RG - 1) / (32 * RG);
     gdn_commit_lazy_kernel<<<(unsigned) (blocks > 0 ? blocks : 1), dim3(32, RG), 0, (cudaStream_t) stream>>>(
-        a, conv_blocks, ctl, must_layers, stop, stop_value, pf != nullptr ? *pf : GdnLazyPf{});
+        a, conv_blocks, ctl, must_layers, stop, stop_value);
     check("gdn_commit_lazy");
+}
+
+void gdn_lazy_prefetch(const GdnLazyPf& pf, const int32_t* tiers, const uint32_t* done, uint32_t ring, void* stream,
+                       uint32_t* steps, int blocks) {
+    if (pf.n[0] == 0) return;
+    if (!tiers || !done || !stream || blocks < 1) {
+        basalt::log::error("basalt", "gdn_lazy_prefetch: invalid arguments");
+        std::exit(1);
+    }
+    gdn_lazy_prefetch_kernel<<<(unsigned) blocks, 1, 0, (cudaStream_t) stream>>>(pf, tiers, done, ring, steps);
+    check("gdn_lazy_prefetch");
 }
 
 bool gdn_commit_lazy_none(CommitCtl* ctl) {

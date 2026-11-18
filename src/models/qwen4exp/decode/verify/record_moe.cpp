@@ -42,6 +42,7 @@ bool Verifier::WindowRecorder::post(int64_t l) {
     const auto& lay = basalt::kernels::cpu::expert_layout();
     // the VRAM groups now; the PCIe groups once the copy engine has landed them in staging.
     // `gy`: the native launch's groups side by side (0: cap, one block row per possible group).
+    basalt::kernels::GdnLazyPf lz_pf;   // the next layer's weights, read into L2 beside this layer's combine
     auto grouped = [&](const unsigned long long* gp, const int32_t* gs, const int32_t* gn, int64_t gy, float* dst_buf) {
         // the layer's GGUF formats (i-quant gate/up, Q2_0 / IQ4_NL down)
         const auto& f = lay.fmt[(size_t) l];
@@ -54,12 +55,11 @@ bool Verifier::WindowRecorder::post(int64_t l) {
         const auto& f = lay.fmt[(size_t) l];
         const NativeExpertLayout L = native_expert_layout(f.gu_type, f.d_type, f.n_embd, f.n_ff, 0.0f, f.up_type);
         DmPlan* P = v_.dm_->plan;
-        // the next GDN layer's commit (and later ones while this layer waits for the CPU), and the next layer's
-        // projection weights into L2 while this layer's combine waits
+        // the next GDN layer's commit (and later ones until this layer's combine has its rows)
         const bool lz_next = lazy && l + 1 < v_.le_ && (lazy_layer(l + 1) || is_qsa_layer(g, l + 1));
         if (lz_next) {
-            GdnLazyPf pf;
             {
+                GdnLazyPf& pf = lz_pf;
                 const LayerView nv(wt, l + 1);
                 const char* names_gdn[] = {"attn_qkv.weight", "attn_gate.weight", "ssm_out.weight"};
                 const char* names_qsa[] = {"attn_q.weight", "attn_k.weight", "attn_v.weight", "indexer.q_proj.weight",
@@ -91,13 +91,12 @@ bool Verifier::WindowRecorder::post(int64_t l) {
                     const WeightRef* w = nv.get(nm);
                     if (w != nullptr) add(w->data, w->bytes);
                 }
-                pf.ids = v_.ids_; pf.n_ids = n * (int) K; pf.n_expert = (int) g.n_expert; pf.ptab = v_.dm_->ptab0 + l * g.n_expert;
             }
             cudaEventRecord(v_.lz_fork_, cs);
             cudaStreamWaitEvent(v_.lz_s_, v_.lz_fork_, 0);
             gdn_commit_lazy(lazy_args, v_.commit_ctl_,
                             lazy_layer(l + 1) ? (int) (gdn_idx[(size_t) (l + 1)] - gdn_first) : 0,
-                            v_.dm_->tags ? v_.dm_->cseen : nullptr, ring, v_.lz_s_, v_.fin_blocks_, &pf);
+                            v_.dm_->tags ? v_.dm_->cseen : nullptr, ring, v_.lz_s_, v_.fin_blocks_);
             cudaEventRecord(v_.lz_join_, v_.lz_s_);
             lz_open = true;
         }
@@ -187,6 +186,14 @@ bool Verifier::WindowRecorder::post(int64_t l) {
             dec_moe_wait(v_.dm_->plan, v_.dm_->m_w + 16, v_.m_flag_, ring, cs, v_.dm_->wstat, (int) l, true, dm_tag);
         }   // true: the combine is the wait's programmatic dependent
         stamp(l, 23);
+        if (v_.dm_->tags && lz_pf.n[0] != 0) {
+            // forked where the combine starts: the plan is final, and this stream has nothing else to run while the
+            // combine waits.  The launch decides from the plan and never waits for the combine.
+            cudaEventRecord(v_.lz_fork_, cs);
+            cudaStreamWaitEvent(v_.lz_s_, v_.lz_fork_, 0);
+            gdn_lazy_prefetch(lz_pf, v_.dm_->plan->counts + 2, v_.dm_->cseen, ring, v_.lz_s_);
+            cudaEventRecord(v_.lz_join_, v_.lz_s_);
+        }
         try {
             dec_moe_combine(v_.parts_, v_.dm_->m_rows, v_.m_ymiss_, v_.dm_->plan, v_.w_, v_.shared_, v_.bo_, N, K, n, nullptr, nullptr,
                             ring, cs, !v_.dm_->tags, tag_done, v_.dm_->tags ? v_.m_flag_ : nullptr, v_.dm_->cseen,
