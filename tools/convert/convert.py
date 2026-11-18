@@ -561,6 +561,7 @@ def from_checkpoint(a) -> None:
             if tuned_sha:
                 meta["mtp"] = {**meta["mtp"], "dense": {"tuning": "self_distilled", "sha256": tuned_sha}}
             used = sorted({t.how for t in dense_src.tensors.values()})
+            mxfp8 = any(t.scale for t in dense_src.tensors.values())
             meta["checkpoint"] = {
                 "dir": Path(a.checkpoint).name, "config_sha256": hashlib.sha256((ck.dir / "config.json").read_bytes()).hexdigest(),
                 "experts": {"format": "nvfp4", "source": "weight (E2M1 pairs), weight_scale (UE4M3 per 16"
@@ -569,7 +570,9 @@ def from_checkpoint(a) -> None:
                             "nibbles moved into 64-value blocks", "tail": "fp32 {s_gate, s_up, s_down, 0} per expert"},
                 "dense": {"projections": "Q6_K where rows are whole 256-value blocks, else Q8_0" if q6k else "Q8_0",
                           "q6_k_method": "least-squares 16-value group scales, 8-bit group scales, fp16 super-scale",
-                          "q8_0_method": "ggml reference rounding", "from": "BF16, quantized once",
+                          "q8_0_method": "ggml reference rounding",
+                          "from": "BF16 or MXFP8 (E4M3 x E8M0 per 32, widened to f32 exactly), quantized once" if mxfp8
+                          else "BF16, quantized once",
                           "transforms": {k: C.METHODS[k] for k in used}},
                 "sections_from": {"path": src.name, "size": src.stat().st_size,
                                   "fingerprint_sha256_first_last_64mib_and_size": fingerprint(src),
