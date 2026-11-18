@@ -330,11 +330,8 @@ void merge_args(std::vector<std::string>& args, const std::vector<std::string>& 
     for (size_t i = 0; i < add.size(); ++i) {
         const bool value = i + 1 < add.size() && add[i + 1].rfind("--", 0) != 0;
         if (add[i].rfind("--", 0) != 0) { args.push_back(add[i]); continue; }
-        if (value && std::find(kept.begin(), kept.end(), add[i]) != kept.end()) {
-            args.push_back(add[i]);
-            args.push_back(add[i + 1]);
-            ++i;
-        }
+        const bool every = std::find(kept.begin(), kept.end(), add[i]) != kept.end();
+        if (value && every) { args.push_back(add[i]); args.push_back(add[i + 1]); ++i; }
         else if (value) { set_arg(args, add[i], add[i + 1]); ++i; }
         else if (!has_arg(args, add[i])) args.push_back(add[i]);
     }
