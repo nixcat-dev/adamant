@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -128,7 +129,7 @@ class Vision:
 
     def unload(self):
         """Stop the encoder; encoded images stay cached on disk."""
-        self.close()
+        self._quit()
         self.stopped = True
 
     def restart(self):
@@ -299,7 +300,7 @@ class Vision:
             path.unlink(missing_ok=True)
             self.cache_bytes -= size
 
-    def close(self):
+    def _quit(self):
         if self.proc is None:
             return
         try:
@@ -308,6 +309,11 @@ class Vision:
             self.proc.wait(timeout=10)
         except Exception:
             self.proc.kill()
+
+    def close(self):
+        """Shutdown: the encoder quits, and its work folder goes with the embeddings cached in it."""
+        self._quit()
+        shutil.rmtree(self.dir, ignore_errors=True)
 
 
 class EngineVision(Vision):
@@ -338,7 +344,8 @@ class EngineVision(Vision):
         pass
 
     def close(self):
-        pass
+        """Shutdown: the work folder goes with the embeddings cached in it."""
+        shutil.rmtree(self.dir, ignore_errors=True)
 
     def _encode_pinned(self, images: list[bytes], pins: list[str]) -> list[tuple[Path, int, int]]:
         """Every image not cached yet goes to the engine in one ENC, so it borrows its slots once."""
