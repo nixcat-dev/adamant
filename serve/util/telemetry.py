@@ -262,8 +262,9 @@ class Telemetry:
         self.fallback = _CpuRamFallback()
         self.hwmon = _Hwmon(hwmon_root)
         first = self.gpus[0][1] if self.gpus else None
+        self.names = {i: g.name() for i, g in self.gpus}
         self.static = {
-            "gpus": [{"index": i, "name": g.name()} for i, g in self.gpus],
+            "gpus": [{"index": i, "name": self.names[i]} for i, _ in self.gpus],
             "cpu_name": _cpu_name(),
             "cores": (self.ps.cpu_count(logical=False) if self.ps else None) or None,
             "threads": os.cpu_count(),
@@ -302,7 +303,7 @@ class Telemetry:
                 r = g.read()
             except Exception:  # noqa: BLE001 - telemetry must never take the server down
                 r = {}
-            s["gpus"].append({"index": i, **{k: r.get(k) for k in GPU_KEYS}})
+            s["gpus"].append({"index": i, "name": self.names[i], **{k: r.get(k) for k in GPU_KEYS}})
         s["cpu"] = s["ram_used"] = s["ram_total"] = None
         s["swap_used"] = s["swap_total"] = None
         if self.ps:

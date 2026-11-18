@@ -75,7 +75,9 @@ class Http(unittest.TestCase):
     def test_the_contract(self):
         code, m = self.call("/metrics")
         self.assertEqual(code, 200)
-        self.assertEqual(set(m), {"engine", "live", "requests", "best", "hardware", "hardware_static", "history", "models", "swap"})
+        self.assertEqual(set(m), {"engine", "live", "requests", "totals", "best", "hardware", "hardware_static", "history",
+                                  "models", "swap"})
+        self.assertEqual(m["totals"], {"since": int(self.svc.started_at), "requests": 0, "prompt_tokens": 0, "output_tokens": 0})
         self.assertEqual(m["best"], {})
         self.assertEqual((m["engine"]["model"], m["engine"]["max_context"]), (self.svc.model, 16384))
         self.assertEqual((m["engine"]["version"], m["engine"]["kv"], m["engine"]["expert_slots"]), ("1.2.3", "fp8", 100))
@@ -129,6 +131,16 @@ class Http(unittest.TestCase):
         self.assertGreaterEqual(rows[0]["ttft_s"], 0)
         self.assertIsNone(rows[0]["draft_len"])                     # the mock engine reports no windows
         self.assertEqual(rows[0]["finish"], "stop")
+
+    def test_the_totals_count_every_finished_request(self):
+        for _ in range(14):                         # more than /metrics lists
+            self.ask("/v1/messages")
+        m = self.call("/metrics")[1]
+        rows = m["requests"]
+        self.assertLess(len(rows), 14)
+        self.assertEqual(m["totals"]["requests"], 14)
+        self.assertEqual(m["totals"]["prompt_tokens"], 14 * rows[0]["prompt_tokens"])   # the same request each time
+        self.assertEqual(m["totals"]["output_tokens"], 14 * rows[0]["output_tokens"])
 
     def test_only_the_newest_are_listed(self):
         for _ in range(REQUESTS_SHOWN + 3):
@@ -273,7 +285,8 @@ class PerGpu(unittest.TestCase):
         s = self.telemetry([0, 1]).sample()
         self.assertEqual([g["index"] for g in s["gpus"]], [0, 1])
         for g in s["gpus"]:
-            self.assertEqual(set(g), {"index", *GPU_KEYS})
+            self.assertEqual(set(g), {"index", "name", *GPU_KEYS})
+        self.assertEqual([g["name"] for g in s["gpus"]], ["Card 0", "Card 1"])
         self.assertEqual([g["power_limit"] for g in s["gpus"]], [400.0, 600.0])          # not summed
         self.assertEqual([g["mem_used"] for g in s["gpus"]], [100, 200])
         self.assertNotIn("gpu_power", s)
