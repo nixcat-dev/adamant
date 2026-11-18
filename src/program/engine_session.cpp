@@ -321,13 +321,21 @@ std::string arg_value(const std::vector<std::string>& args, const std::string& f
     return "";
 }
 
-// FLAG [VALUE] words added to `args`: a flag already there takes the new value, else both are appended.  A word
-// that does not begin with "--" after a flag is its value.
+// FLAG [VALUE] words added to `args`: a flag already there takes the new value, else both are appended; a flag whose
+// every value the engine keeps (each `--exp` adds its settings) is appended each time.  A word that does not begin
+// with "--" after a flag is its value.
 void merge_args(std::vector<std::string>& args, const std::vector<std::string>& add) {
+    static const std::vector<std::string> kept = {"--exp", "--control-vector", "--control-vector-scaled", "--image",
+                                                  "--image-at"};
     for (size_t i = 0; i < add.size(); ++i) {
         const bool value = i + 1 < add.size() && add[i + 1].rfind("--", 0) != 0;
         if (add[i].rfind("--", 0) != 0) { args.push_back(add[i]); continue; }
-        if (value) { set_arg(args, add[i], add[i + 1]); ++i; }
+        if (value && std::find(kept.begin(), kept.end(), add[i]) != kept.end()) {
+            args.push_back(add[i]);
+            args.push_back(add[i + 1]);
+            ++i;
+        }
+        else if (value) { set_arg(args, add[i], add[i + 1]); ++i; }
         else if (!has_arg(args, add[i])) args.push_back(add[i]);
     }
 }
