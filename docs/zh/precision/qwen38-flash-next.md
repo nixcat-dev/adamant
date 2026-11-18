@@ -16,7 +16,8 @@ Flash-Next 在哪里舍入、每种舍入要付出多少代价。方法与参考
 - **比 llama.cpp 更接近 BF16。** 同样的 Q8_0 权重，对照 BF16 参考基准：llama.cpp 得 KLD 0.0325、top-1 93.98%；
   Basalt 的 Q8_0 pack 得 KLD 0.0200、top-1 95.34%。
 - **只量化一次。** GGUF pack 保留其 block。NVIDIA NVFP4 pack 逐位保留 NVIDIA 的专家码与缩放因子，并把每个稠密
-  张量从 BF16 量化一次。
+  张量从 BF16 量化一次。FP4-Local checkpoint 转成的 pack 以同样方式保留专家码与缩放因子（CSF 缩放流逐位解码），
+  把每个 MXFP8 投影精确扩到 f32 后量化一次，并把 NVFP4 n-gram 表存为 Q8_0。
 - **默认配置下只有一种舍入带来可测量的质量代价：** Q6_K 稠密投影，对照 NVIDIA 的精度约 0.006 KLD 与 0.3 到 0.6 个
   top-1 百分点。其余一切都约 0.001 或更低。
 

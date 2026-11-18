@@ -25,12 +25,15 @@ Inputs
 
 From an NVFP4 checkpoint (--sections-from with --checkpoint)
   --checkpoint DIR   NVIDIA Model Optimizer's NVFP4 safetensors (config.json, the model-NNNNN-of-NNNNN shards, the FP8
-                     n-gram table file, tokenizer files, generation_config.json, README.md). The routed experts keep
-                     their E2M1 codes and UE4M3 scales, moved into Basalt's blocks with the FP32 tail {s_gate, s_up,
-                     s_down, 0} from weight_scale_2; the projections are quantized once from BF16 to Q6_K (Q8_0 where
-                     rows are not whole 256-value blocks, and for the output head and token embedding); the other
-                     tensors keep BF16 or become F32/F16 as the engine reads them; the n-gram table is FP8 code x scale
-                     as Q8_0. The GGUF metadata and the tokenizer come from the checkpoint's files.
+                     n-gram table file, tokenizer files, generation_config.json, README.md), or its FP4-Local layout
+                     (the shards in tensors/, expert scales as CSF stream pairs, MXFP8 projections, an NVFP4 n-gram
+                     table). The routed experts keep their E2M1 codes and UE4M3 scales (CSF pairs decoded bit for
+                     bit), moved into Basalt's blocks with the FP32 tail {s_gate, s_up, s_down, 0} from weight_scale_2;
+                     the projections are quantized once, from BF16 or from MXFP8 widened exactly to f32, to Q6_K (Q8_0
+                     where rows are not whole 256-value blocks, and for the output head and token embedding); the other
+                     tensors keep BF16 or become F32/F16 as the engine reads them; the n-gram table is FP8 code x scale,
+                     or NVFP4 code x block scale x weight_scale_2, as Q8_0. The GGUF metadata and the tokenizer come
+                     from the checkpoint's files.
   --dense-q8-0       Q8_0 projections instead of Q6_K (the 8-bit dense variant)
   The drafter and vision sections come from BASE byte for byte; BASE's vocabulary must be the checkpoint's.
 
@@ -457,7 +460,7 @@ def warn_unofficial():
 
 def from_checkpoint(a) -> None:
     """The language model straight from an NVFP4 safetensors checkpoint (routed experts moved into Basalt's layout,
-    every other tensor converted once from BF16, the n-gram table from FP8, metadata and tokenizer from the
+    every other tensor converted once from BF16 or MXFP8, the n-gram table from FP8 or NVFP4, metadata and tokenizer from the
     checkpoint's files); drafter and vision are copied from BASE byte for byte."""
     import multiprocessing
     import checkpoint as C
@@ -810,7 +813,7 @@ def main():
     ap.add_argument("--requant-dense-q6k", metavar="PACK.basalt",
                     help="copy PACK with its Q8_0 dense projections requantized to Q6_K")
     ap.add_argument("--checkpoint", metavar="DIR",
-                    help="an NVFP4 safetensors checkpoint: with --sections-from, the language model is read from it; "
+                    help="an NVFP4 or FP4-Local safetensors checkpoint: with --sections-from, the language model is read from it; "
                          "with --requant-dense-q6k, the BF16 projections")
     ap.add_argument("--dense-q8-0", action="store_true",
                     help="with --checkpoint and --sections-from: Q8_0 projections instead of Q6_K")

@@ -41,3 +41,12 @@ python3 tools/convert/convert.py --sections-from Qwen3.8-FN-UD-Q4_K_XL.basalt --
 ```
 
 `--mtp-dense FILE`（官方 NVFP4、UD-IQ1_M、UD-IQ2_XS 或 UD-IQ3_XXS pack 的 `mtp/dense` 字节）会换入一个调校过的 drafter 层；转换器把它记录在 `meta.mtp.dense` 中。输出约 122 GiB（8-bit 变体为 123 GiB）。基础词表必须是 NVIDIA 的。
+
+## FP4-Local checkpoint
+
+`--checkpoint` 也读取 Model Optimizer 的 FP4-Local 布局，例如 [nvidia/Qwen3.8-Flash-Next-FP4-Local](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-FP4-Local)：分片位于 `tensors/`，路由专家的缩放因子是 CSF 流对（`weight_scale.nvfp4_csf_fixed`、`weight_scale.nvfp4_csf_exceptions`），投影是 MXFP8，n-gram 表是 NVFP4。上面的命令把该文件夹作为 `--checkpoint` 即可。
+
+- **专家：** 每个 CSF 流对逐位解码为 UE4M3 缩放因子；之后码与缩放因子像在 NVFP4 pack 中一样搬移。
+- **投影：** MXFP8 值（E4M3 码，每 32 个值一个 E8M0 缩放因子）精确扩到 f32，然后走 BF16 的路径：Q6_K 或 Q8_0，引擎读取 BF16 的地方保持 BF16。
+- **n-gram 表：** E2M1 码 × UE4M3 块缩放因子 × `weight_scale_2`，存为 Q8_0（一次舍入）。
+- **drafter 与 vision：** 与 NVFP4 pack 一样，从基础 pack 复制。
