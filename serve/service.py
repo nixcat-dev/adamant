@@ -125,6 +125,7 @@ class Service:
         self.best: dict[str, dict] = {}                 # fastest whole request since start: "decode", "prefill"
         self.history = collections.deque(maxlen=500)    # finished requests, newest last
         self.requests_done = 0                           # finished requests since start
+        self.tokens_done = {"prompt_tokens": 0, "output_tokens": 0}   # ... and their prompt and output tokens
         self.last_timings = None                         # last request's timings
         self.last_request_at = None                      # last request start or finish
         self.started_at = time.time()
@@ -625,6 +626,7 @@ class Service:
             # parallel: generating while any slot decodes, though the newest request may still wait or read
             decoding = any(st.get("first_token") is not None for st, _ in self.live_reqs.values())
             hist = list(self.history)
+            totals = {"since": int(self.started_at), "requests": self.requests_done, **self.tokens_done}
         busy = bool(s.get("busy"))
         if self.loading:
             state = "loading"
@@ -655,7 +657,7 @@ class Service:
             {"now": {"gpus": []}, "history": {}, "static": {"gpus": []}}
         with self.status_lock:
             best = {k: dict(v) for k, v in self.best.items()}
-        return {"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN], "best": best,
+        return {"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN], "totals": totals, "best": best,
                 "hardware": tel["now"], "hardware_static": tel["static"], "history": tel["history"]}
 
     def _note_best(self, r: dict) -> None:
@@ -1224,6 +1226,8 @@ class Service:
                             ssd_share = round(last["file_reads"] / routed, 3) if last.get("file_reads") and routed else None
                             seen = prompt_tokens_seen(len(ids), last)   # less than len(ids) when cancelled mid-read
                             self.requests_done += 1
+                            self.tokens_done["prompt_tokens"] += seen
+                            self.tokens_done["output_tokens"] += n
                             if st.get("slot") is not None:
                                 self.slot_last[st["slot"]] = {"ctx": seen + n, "offered": last.get("drafts_offered"),
                                                               "accepted": last.get("drafts_accepted"), "at": time.time()}
