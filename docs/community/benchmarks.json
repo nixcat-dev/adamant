@@ -1576,6 +1576,65 @@
       "prefill_64k_tps": 4798.5,
       "decode_tps": 151.5,
       "notes": "headless desktop, 60 GiB RAM; the larger IQ4_XS pack OOMs at the 64k prefill on this box, so no IQ4_XS row"
+    },
+    {
+      "submitter": "TheStigma",
+      "date": "2026-11-21",
+      "commit": "9a588c4f8b",
+      "preset": "community-1",
+      "model": "Qwen3.8-Flash-Next",
+      "gpus": [
+        {
+          "name": "RTX 3090 Ti",
+          "vram_gib": 24,
+          "power_w": 480,
+          "pcie": "4.0 x16",
+          "h2d_gbps": 26.9
+        }
+      ],
+      "ram_gib": 125,
+      "cpu": "AMD Ryzen 9 9950X3D, 16 cores",
+      "ram_gbps": 59.2,
+      "os": "Windows",
+      "quant": "UD-IQ3_XXS",
+      "kv": "int8",
+      "prefill_16k_tps": 3336.6,
+      "prefill_64k_tps": 3605.7,
+      "decode_tps": 214.3,
+      "notes": "custom UD3.1 IQ3_XXS pack (self-converted from unsloth shards, sha 327a720b..); mem OC active: 3090 Ti +2000, 3090 Strix +1200; core voltage-capped 900 mV (curve untuned); power limits 480/390 W; driver 610.88; Windows 11; engine = Adamant main 518b317 + PR #30 (9a588c4f8b), MSVC/CUDA 13.0.2 build; single-card row = CUDA_VISIBLE_DEVICES=0 (Ti only), dual row adds Strix on x4 (peer h2d 6.4 GB/s); zero SSD spill both rows; box otherwise idle"
+    },
+    {
+      "submitter": "TheStigma",
+      "date": "2026-11-21",
+      "commit": "9a588c4f8b",
+      "preset": "community-1",
+      "model": "Qwen3.8-Flash-Next",
+      "gpus": [
+        {
+          "name": "RTX 3090 Ti",
+          "vram_gib": 24,
+          "power_w": 480,
+          "pcie": "4.0 x16",
+          "h2d_gbps": 26.9
+        },
+        {
+          "name": "RTX 3090",
+          "vram_gib": 24,
+          "power_w": 390,
+          "pcie": "4.0 x4",
+          "h2d_gbps": 6.4
+        }
+      ],
+      "ram_gib": 125,
+      "cpu": "AMD Ryzen 9 9950X3D, 16 cores",
+      "ram_gbps": 59.6,
+      "os": "Windows",
+      "quant": "UD-IQ3_XXS",
+      "kv": "int8",
+      "prefill_16k_tps": 2726.0,
+      "prefill_64k_tps": 2927.9,
+      "decode_tps": 190.6,
+      "notes": "custom UD3.1 IQ3_XXS pack (self-converted from unsloth shards, sha 327a720b..); mem OC active: 3090 Ti +2000, 3090 Strix +1200; core voltage-capped 900 mV (curve untuned); power limits 480/390 W; driver 610.88; Windows 11; engine = Adamant main 518b317 + PR #30 (9a588c4f8b), MSVC/CUDA 13.0.2 build; single-card row = CUDA_VISIBLE_DEVICES=0 (Ti only), dual row adds Strix on x4 (peer h2d 6.4 GB/s); zero SSD spill both rows; box otherwise idle"
     }
   ]
 }
