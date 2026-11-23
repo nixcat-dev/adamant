@@ -1576,6 +1576,72 @@
       "prefill_64k_tps": 4798.5,
       "decode_tps": 151.5,
       "notes": "headless desktop, 60 GiB RAM; the larger IQ4_XS pack OOMs at the 64k prefill on this box, so no IQ4_XS row"
+    },
+    {
+      "submitter": "Codemaster64",
+      "date": "2026-11-23",
+      "commit": "518b3173ff",
+      "preset": "community-1",
+      "model": "Qwen3.8-Flash-Next",
+      "gpus": [
+        {
+          "name": "RTX 3080 Ti",
+          "vram_gib": 12,
+          "power_w": 450,
+          "pcie": "4.0 x16",
+          "h2d_gbps": 26.8
+        },
+        {
+          "name": "RTX A4000",
+          "vram_gib": 16,
+          "power_w": 140,
+          "pcie": "4.0 x4",
+          "h2d_gbps": 6.4
+        }
+      ],
+      "ram_gib": 31,
+      "cpu": "AMD Ryzen 7 9800X3D, 8 cores",
+      "ram_gbps": 57.6,
+      "os": "Windows",
+      "quant": "IQ1_M",
+      "kv": "int8",
+      "prefill_16k_tps": 2424.8,
+      "prefill_64k_tps": 2884.0,
+      "decode_tps": 88.8,
+      "notes": "heterogeneous dual Ampere (3080 Ti x16 + A4000 x4) on 32 GB RAM, native Win11 MSVC/CUDA 13.3 (sm_86), driver 610.88; self-converted Coder IQ1_M (27.3 GiB: 9.0+14.2 VRAM, 4.3 RAM, 0 SSD spill)"
+    },
+    {
+      "submitter": "Codemaster64",
+      "date": "2026-11-23",
+      "commit": "518b3173ff",
+      "preset": "community-1",
+      "model": "Qwen3.8-Flash-Next",
+      "gpus": [
+        {
+          "name": "RTX 3080 Ti",
+          "vram_gib": 12,
+          "power_w": 450,
+          "pcie": "4.0 x16",
+          "h2d_gbps": 26.8
+        },
+        {
+          "name": "RTX A4000",
+          "vram_gib": 16,
+          "power_w": 140,
+          "pcie": "4.0 x4",
+          "h2d_gbps": 6.4
+        }
+      ],
+      "ram_gib": 31,
+      "cpu": "AMD Ryzen 7 9800X3D, 8 cores",
+      "ram_gbps": 58.5,
+      "os": "Windows",
+      "quant": "Q2_0",
+      "kv": "int8",
+      "prefill_16k_tps": 1852.3,
+      "prefill_64k_tps": 2805.6,
+      "decode_tps": 128.0,
+      "notes": "heterogeneous dual Ampere (3080 Ti x16 + A4000 x4) on 32 GB RAM, native Win11 MSVC/CUDA 13.3 (sm_86), driver 610.88; self-converted SC117 Q2_0 (35.4 GiB: 9.0+14.2 VRAM, 12.2 RAM, 0 SSD spill)"
     }
   ]
 }
